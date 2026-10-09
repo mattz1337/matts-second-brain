@@ -37,7 +37,7 @@ Open [the built app](http://127.0.0.1:4310). Stop with Ctrl+C. Only one API proc
 - Ask for a cited evidence digest; insufficient relevant knowledge is reported as a gap.
 - Animated Three.js knowledge globe with glowing nodes, flowing connection arcs, drag/zoom, smooth node flights, motion controls, topic filters, and an accessible list view. Merge duplicate named entities and undo merges.
 - Versioned edits and review history, archival/restoration, item/source deletion, portable export, and empty-workspace restore with search-index rebuilding.
-- Ten typed MCP tools over stateless Streamable HTTP, plus a stdio bridge. Read-only and contribution tokens are separate; assistants cannot review/verify or physically delete data.
+- Fourteen typed MCP tools over stateless Streamable HTTP, plus a stdio bridge. Read-only and contribution tokens are separate; assistants cannot review/verify or physically delete data.
 - Responsive web app with capture, library, sources, graph, review, and integration settings.
 
 ## Import from Synology Note Station
@@ -63,21 +63,35 @@ npm.cmd run nsx:validate -- "C:\path\to\export.nsx"
 
 The validation command writes to a new ignored `.data/nsx-validation-*` directory and leaves the live workspace unchanged.
 
+## Categories and rescanning
+
+The graph includes real category nodes: notes/sources/claims → **categorized as** → a narrower category → **category parent** → a broader category. New captures, imports (including NSX originals), and edits retain organizational metadata immediately and queue semantic categorization. The same local multilingual E5 model used for search compares note content, title, tags, and notebook/stack context with bilingual category descriptions. The initial catalog has 24 subject branches and includes up to 100 user-defined category leaves. Hierarchical tags such as `Personal / Learning` supply explicit branches. Note Station stack → notebook organization remains a separate Notebooks tree. Categories organize content; they do not accept claims or verify facts.
+
+Open **Knowledge graph** to browse category parents and children with descendant counts. Selecting a branch filters to its descendants. The globe groups items near category hubs and keeps parents in bounded samples. **Organize categories**, available from notes, source details, and globe selections, shows assigned categories and other suggestions with confidence, similarity, and separation from alternatives. Confirm a suggestion, dismiss a category, add a custom path, or undo a correction. Confirmations and dismissals are stored independently from generated assignments and survive edits, rescans, and backups; ordinary assistants cannot override them.
+
+Up to three semantic suggestions are retained. Strong enough matches appear as **Suggested** graph memberships; ambiguous matches stay available for review while the item remains **Uncategorized**. Confidence is a similarity/margin heuristic, not a calibrated probability. The minimum suggestion score defaults to 0.78; automatic membership requires at least 0.82 plus separation of 0.008 from the runner-up (or a very strong score of 0.88). Secondary automatic suggestions require 0.86. These thresholds passed a small bilingual fixture check, not a representative corpus accuracy benchmark. E5 classification inputs use the `query:` prefix. [E5 model card](https://huggingface.co/intfloat/multilingual-e5-small).
+
+Long notes use at most eight distributed windows, retaining title/tags/folder context in each window; this samples rather than exhaustively classifies the entire note. Keyword categories are a provisional fallback while inference is pending or when `EMBEDDINGS=lexical`. Disabled/loading/failed models, pending work, and per-item errors are visible. Inference runs outside database transactions, rejects results after concurrent edits, and serializes access to the local model with search indexing.
+
+Existing profiles get a background backfill on first startup with this categorization version. **Rescan categories** reruns semantic analysis across the existing corpus, with persistent progress, retry in Sources, and restart recovery. It preserves source originals, tags, evidence, knowledge versions, review state, and manual category decisions. Repeated scans do not duplicate nodes or links. Restoring an older backup also rebuilds categories. MCP clients can call `list_categories`, `get_item_categories`, `query_graph` with `category_id`, and `rescan_categories`, then monitor the returned job with `get_import_job`. `correct_item_category` requires owner review authority and an expected category-decision version. All processing stays local.
+
 ## Configuration
 
 Copy `.env.example` to `.env` if you want to change defaults. Credentials and knowledge in `.data/` are ignored by Git.
 
-| Setting              | Default                        | Purpose                                                                                    |
-| -------------------- | ------------------------------ | ------------------------------------------------------------------------------------------ |
-| `PORT`               | `4310`                         | Local API / built web app port; Vite's development proxy expects this default              |
-| `DATA_DIR`           | `.data`                        | Persistent PostgreSQL data, attachments, temporary uploads, credentials, and cached models |
-| `SEED_DEMO`          | `true`                         | Add starter notes only to an empty, unseeded workspace                                     |
-| `EMBEDDINGS`         | `local`                        | Local transformer inference; use `lexical` to disable semantic inference                   |
-| `EMBEDDING_MODEL`    | `Xenova/multilingual-e5-small` | 384-dimensional ONNX model; other models must have 384 dimensions                          |
-| `SEMANTIC_MIN_SCORE` | `0.8`                          | Similarity cutoff, calibrated only on small spike fixtures; this is not a truth score      |
-| `EXTRACTION`         | `extractive`                   | Exact sentence candidates by default; `ollama` uses a local schema-constrained LLM         |
-| `OLLAMA_URL`         | `http://127.0.0.1:11434`       | Loopback-only local model endpoint                                                         |
-| `OLLAMA_MODEL`       | `qwen2.5:7b`                   | Optional extraction model installed separately in Ollama                                   |
+| Setting                    | Default                        | Purpose                                                                                    |
+| -------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------ |
+| `PORT`                     | `4310`                         | Local API / built web app port; Vite's development proxy expects this default              |
+| `DATA_DIR`                 | `.data`                        | Persistent PostgreSQL data, attachments, temporary uploads, credentials, and cached models |
+| `SEED_DEMO`                | `true`                         | Add starter notes only to an empty, unseeded workspace                                     |
+| `EMBEDDINGS`               | `local`                        | Local transformer inference; use `lexical` to disable semantic inference                   |
+| `EMBEDDING_MODEL`          | `Xenova/multilingual-e5-small` | 384-dimensional ONNX model; other models must have 384 dimensions                          |
+| `SEMANTIC_MIN_SCORE`       | `0.8`                          | Similarity cutoff, calibrated only on small spike fixtures; this is not a truth score      |
+| `CATEGORY_MIN_SIMILARITY`  | `0.78`                         | Minimum semantic category suggestion score                                                 |
+| `CATEGORY_AUTO_SIMILARITY` | `0.82`                         | Minimum automatic category score; separation/secondary-match guards also apply             |
+| `EXTRACTION`               | `extractive`                   | Exact sentence candidates by default; `ollama` uses a local schema-constrained LLM         |
+| `OLLAMA_URL`               | `http://127.0.0.1:11434`       | Loopback-only local model endpoint                                                         |
+| `OLLAMA_MODEL`             | `qwen2.5:7b`                   | Optional extraction model installed separately in Ollama                                   |
 
 To start an empty collection, set `SEED_DEMO=false` and choose a new `DATA_DIR` before starting. Changing embedding model namespaces queues re-indexing. A model download can be prepared independently with `npm.cmd run models:download`.
 
@@ -85,7 +99,7 @@ To start an empty collection, set `SEED_DEMO=false` and choose a new `DATA_DIR` 
 
 Open **Connections & settings** in the web app. Copy the local endpoint and choose either a read-only token or a read/contribute token. Tokens stay on disk and are not printed to the server log. The UI provides an example client configuration; individual clients use different configuration formats.
 
-Available tools: `search_knowledge`, `get_knowledge`, `query_graph`, `add_knowledge`, `import_source`, `get_import_job`, `attach_evidence`, `review_knowledge`, `update_knowledge`, `archive_knowledge`. The review tool requires owner authority; ordinary MCP credentials cannot invoke it successfully.
+Available tools: `search_knowledge`, `get_knowledge`, `query_graph`, `list_categories`, `get_item_categories`, `correct_item_category`, `rescan_categories`, `add_knowledge`, `import_source`, `get_import_job`, `attach_evidence`, `review_knowledge`, `update_knowledge`, `archive_knowledge`. Review and category-correction tools require owner authority; ordinary MCP credentials cannot invoke them successfully.
 
 For stdio, start the API first, then run `npm.cmd run mcp`. The bridge uses the same API/database, rather than opening a second database writer. A generic client configuration is:
 
@@ -120,6 +134,7 @@ npm.cmd run test:e2e
 - Integration tests exercise PostgreSQL persistence, lifecycle rules, exact citations, PDF/HTML/NSX ingestion, notebook selection, interrupted migrations, source/attachment deletion, portable ZIP/JSON backup restore, and scope checks.
 - Official SDK clients test tool discovery and actual read/write flows over HTTP and stdio.
 - Semantic smoke tests use the real multilingual model and include an unrelated negative query.
+- `npm run test:categories:semantic` checks actual English/German semantic category rankings and abstention on ambiguous text. Integration checks cover correction persistence, backup restore, inference races and model errors.
 - Playwright builds the app and tests capture/edit/archive/forget, import/review/verify/citation, Note Station previews/notebook selection/attachment downloads/backups, graph/list/settings, and a mobile viewport. It uses installed Chrome on this Windows machine; on another host first run `npx playwright install chromium`.
 - Browser screenshots are written to `.data/screenshots/`; traces from failures stay in `test-results/`.
 

@@ -12,6 +12,7 @@ export class Embeddings {
     | null = null;
   private initializing: Promise<void> | null = null;
   private processing = false;
+  private inferenceQueue: Promise<unknown> = Promise.resolve();
   readonly modelId: string;
   constructor(
     private db: DB,
@@ -50,6 +51,11 @@ export class Embeddings {
     this.initializing = null;
   }
   async embed(text: string, query = false): Promise<number[] | null> {
+    const inference = this.inferenceQueue.then(() => this.performEmbedding(text, query));
+    this.inferenceQueue = inference.catch(() => undefined);
+    return inference;
+  }
+  private async performEmbedding(text: string, query = false): Promise<number[] | null> {
     if (!this.extractor) return null;
     const prefix = this.model.includes('e5') ? (query ? 'query: ' : 'passage: ') : '';
     const result = await this.extractor(prefix + text, {

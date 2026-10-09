@@ -8,6 +8,7 @@ import {
   evidenceSchema,
   searchSchema,
   graphSchema,
+  categoryDecisionSchema,
 } from '../shared/contracts.js';
 import type { Actor } from '../shared/contracts.js';
 import { BrainService, scope } from './service.js';
@@ -32,6 +33,36 @@ export const toolDefinitions = {
       'Read a bounded graph neighborhood. Returns typed relationships and a truncation flag; never executes user queries.',
     schema: graphSchema,
     scope: 'brain:read',
+  },
+  list_categories: {
+    description:
+      'Read broader/narrower category branches with descendant item counts and categorization job status. Automatic categories are organization suggestions, not verified facts.',
+    schema: z.object({ include_candidates: z.boolean().default(false) }),
+    scope: 'brain:read',
+  },
+  rescan_categories: {
+    description:
+      'Queue an explainable local categorization rescan of existing notes, sources, and claims. Reuses a running scan and preserves evidence and review states. Track its job with get_import_job.',
+    schema: z.object({}),
+    scope: 'brain:write',
+  },
+  get_item_categories: {
+    description:
+      'Read assigned and suggested categories, semantic confidence, rationale, processing status, and persistent owner corrections for a source or knowledge item.',
+    schema: z.object({ id }),
+    scope: 'brain:read',
+  },
+  correct_item_category: {
+    description:
+      'Owner-only category correction: accept/add, dismiss, or reset a category decision. Requires expected decision version; ordinary assistants cannot override owner choices. New paths use an array of parent/child labels.',
+    schema: z.object({
+      id,
+      expected_version: z.number().int().min(0),
+      action: z.enum(['accept', 'dismiss', 'reset']),
+      category_id: id.optional(),
+      path: z.array(z.string().trim().min(1).max(80)).min(1).max(5).optional(),
+    }),
+    scope: 'brain:review',
   },
   add_knowledge: {
     description:
@@ -96,6 +127,21 @@ export async function invokeTool(
       return service.getKnowledge(actor, String(args.id));
     case 'query_graph':
       return service.graph(actor, args);
+    case 'list_categories':
+      return {
+        categories: await service.classification.list(Boolean(args.include_candidates)),
+        status: await service.classification.status(),
+      };
+    case 'rescan_categories':
+      return service.classification.queue();
+    case 'get_item_categories':
+      return service.classification.detail(String(args.id));
+    case 'correct_item_category':
+      return service.classification.decide(
+        actor,
+        String(args.id),
+        categoryDecisionSchema.parse(args),
+      );
     case 'add_knowledge':
       return service.addKnowledge(actor, args);
     case 'import_source':

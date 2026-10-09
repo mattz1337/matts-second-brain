@@ -21,11 +21,13 @@ export function SourceDetail({
   onClose,
   onChanged,
   onGraph,
+  onCategorize,
 }: {
   id: string;
   onClose: () => void;
   onChanged: () => void;
   onGraph?: (id: string) => void;
+  onCategorize: (id: string) => void;
 }) {
   const { data, error, loading } = useResource(
     () =>
@@ -166,6 +168,9 @@ export function SourceDetail({
               </section>
             )}
             <div className="detail-bottom">
+              <button className="button small" onClick={() => onCategorize(id)}>
+                Organize categories
+              </button>
               {onGraph && (
                 <button className="button small" onClick={() => onGraph(id)}>
                   Show connections <ArrowUpRight size={14} />
@@ -333,9 +338,11 @@ export default function Sources({
                 <strong>{j.title}</strong>
                 <small>
                   {j.status === 'completed'
-                    ? j.result.notes !== undefined
-                      ? `${j.result.imported || 0} notes imported · ${j.result.duplicates || 0} unchanged · ${j.result.skipped || 0} skipped · ${j.result.attachments || 0} attachments · ${j.result.claims || 0} claim candidates`
-                      : `${j.result.claims || 0} claims · ${j.result.duplicate ? 'Existing revision reused' : 'Ready for review'}`
+                    ? j.result.scanned !== undefined
+                      ? `${j.result.scanned} items scanned · ${j.result.categorized || 0} categorized · ${j.result.uncategorized || 0} uncategorized`
+                      : j.result.notes !== undefined
+                        ? `${j.result.imported || 0} notes imported · ${j.result.duplicates || 0} unchanged · ${j.result.skipped || 0} skipped · ${j.result.attachments || 0} attachments · ${j.result.claims || 0} claim candidates`
+                        : `${j.result.claims || 0} claims · ${j.result.duplicate ? 'Existing revision reused' : 'Ready for review'}`
                     : j.status === 'failed'
                       ? j.error
                       : `${j.stage} · ${j.progress}%`}

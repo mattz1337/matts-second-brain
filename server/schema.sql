@@ -108,3 +108,22 @@ CREATE TABLE IF NOT EXISTS source_attachments (
   UNIQUE(revision_id,name,content_hash)
 );
 INSERT INTO schema_migrations(version) VALUES(4) ON CONFLICT DO NOTHING;
+ALTER TABLE relations ADD COLUMN IF NOT EXISTS properties jsonb NOT NULL DEFAULT '{}';
+CREATE TABLE IF NOT EXISTS categorizations (
+  node_id uuid PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+  engine_version text NOT NULL, input_hash text NOT NULL,
+  scanned_at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO schema_migrations(version) VALUES(5) ON CONFLICT DO NOTHING;
+ALTER TABLE categorizations ADD COLUMN IF NOT EXISTS semantic_state text NOT NULL DEFAULT 'pending';
+ALTER TABLE categorizations ADD COLUMN IF NOT EXISTS suggestions jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE categorizations ADD COLUMN IF NOT EXISTS decision_version integer NOT NULL DEFAULT 0;
+ALTER TABLE categorizations ADD COLUMN IF NOT EXISTS error text;
+CREATE TABLE IF NOT EXISTS category_decisions (
+  node_id uuid NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  category_id uuid NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  decision text NOT NULL CHECK(decision IN ('accept','dismiss')),
+  actor text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(node_id,category_id)
+);
+INSERT INTO schema_migrations(version) VALUES(6) ON CONFLICT DO NOTHING;

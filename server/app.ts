@@ -109,6 +109,25 @@ export function createApp(service: BrainService, keys: Credentials, port = 4310)
   app.post('/api/search', async (req, res) => res.json(await service.search(req.actor, req.body)));
   app.post('/api/answer', async (req, res) => res.json(await service.answer(req.actor, req.body)));
   app.post('/api/graph', async (req, res) => res.json(await service.graph(req.actor, req.body)));
+  app.get('/api/categories', async (req, res) => {
+    scope(req.actor, 'brain:read');
+    res.json(await service.classification.list(req.query.include_candidates === 'true'));
+  });
+  app.get('/api/categories/status', async (req, res) => {
+    scope(req.actor, 'brain:read');
+    res.json(await service.classification.status());
+  });
+  app.post('/api/categories/rescan', async (req, res) => {
+    scope(req.actor, 'brain:write');
+    res.status(202).json(await service.classification.queue());
+  });
+  app.get('/api/categories/items/:id', async (req, res) => {
+    scope(req.actor, 'brain:read');
+    res.json(await service.classification.detail(id.parse(req.params.id)));
+  });
+  app.post('/api/categories/items/:id/decisions', async (req, res) => {
+    res.json(await service.classification.decide(req.actor, id.parse(req.params.id), req.body));
+  });
   app.get('/api/review', async (req, res) => res.json(await service.reviewQueue(req.actor)));
   app.post('/api/review/batch', async (req, res) =>
     res.json(await service.batchReview(req.actor, req.body)),

@@ -21,11 +21,13 @@ export default function Graph({
   compact = false,
   onSelect,
   onFocus,
+  onCategorize,
 }: {
   data: GraphResult;
   compact?: boolean;
   onSelect: (id: string, type: string) => void;
   onFocus?: (id: string) => void;
+  onCategorize?: (id: string) => void;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const instance = useRef<GlobeScene | null>(null);
@@ -47,7 +49,14 @@ export default function Graph({
   selectedRef.current = selected;
   const node = data.nodes.find((item) => item.id === selected);
   const connections = useMemo(
-    () => data.edges.filter((edge) => edge.source === selected || edge.target === selected),
+    () =>
+      data.edges
+        .filter((edge) => edge.source === selected || edge.target === selected)
+        .sort(
+          (a, b) =>
+            Number(b.type === 'category_parent' || b.type === 'categorized_as') -
+            Number(a.type === 'category_parent' || a.type === 'categorized_as'),
+        ),
     [data.edges, selected],
   );
   // Polling returns new object identities. Rebuild only when graph content changes.
@@ -276,7 +285,7 @@ export default function Graph({
                       target && (
                         <button
                           key={edge.id}
-                          title={`${pretty(edge.type)}: ${target.label}`}
+                          title={`${pretty(edge.type)}: ${target.label}${edge.properties?.rationale ? ` — ${edge.properties.rationale}` : ''}`}
                           onClick={() => choose(target)}
                         >
                           {pretty(edge.type)} <span>{target.label}</span>
@@ -285,11 +294,26 @@ export default function Graph({
                     );
                   })}
                 </div>
+                {connections
+                  .filter((edge) => edge.source === node.id && edge.type === 'categorized_as')
+                  .slice(0, 3)
+                  .map((edge) => (
+                    <p className="category-reason" key={edge.id}>
+                      {data.nodes.find((item) => item.id === edge.target)?.label}:{' '}
+                      {edge.properties?.confidence &&
+                        `${edge.properties.status === 'confirmed' ? 'Confirmed' : 'Suggested'} · ${edge.properties.confidence} confidence · `}
+                      {edge.properties?.rationale}
+                    </p>
+                  ))}
                 <div className="globe-selection-actions">
                   <button onClick={() => onSelect(node.id, node.type)}>
-                    Open knowledge <ArrowUpRight size={14} />
+                    {node.type === 'category' ? 'Explore category' : 'Open knowledge'}{' '}
+                    <ArrowUpRight size={14} />
                   </button>
                   {onFocus && <button onClick={() => onFocus(node.id)}>Focus connections</button>}
+                  {onCategorize && ['claim', 'note', 'source'].includes(node.type) && (
+                    <button onClick={() => onCategorize(node.id)}>Organize categories</button>
+                  )}
                 </div>
               </div>
             ) : (

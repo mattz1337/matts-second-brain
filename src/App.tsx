@@ -24,7 +24,16 @@ import {
 import { api, date } from './api';
 import { useResource } from './hooks';
 import { SectionHeading, KnowledgeCard, Loading, Empty, LinkAction } from './components';
-import type { Dashboard, GraphResult, ModelStatus, Knowledge } from '../shared/contracts';
+import type {
+  Dashboard,
+  GraphResult,
+  ModelStatus,
+  Knowledge,
+  CategorySummary,
+  CategorizationStatus,
+} from '../shared/contracts';
+import CategoryBrowser from './CategoryBrowser';
+import CategoryEditor from './CategoryEditor';
 import Graph from './Graph';
 import Capture from './Capture';
 import Detail from './Detail';
@@ -65,6 +74,7 @@ export default function App() {
   const [capture, setCapture] = useState<'note' | 'source' | null>(null);
   const [detail, setDetail] = useState<string | null>(null);
   const [source, setSource] = useState<string | null>(null);
+  const [categoryItem, setCategoryItem] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [headerQuery, setHeaderQuery] = useState('');
   const [focus, setFocus] = useState<string | undefined>();
@@ -512,6 +522,7 @@ export default function App() {
                   onSelect={openNode}
                   revision={revision}
                   dashboard={d}
+                  onCategorize={setCategoryItem}
                 />
               )}
               {view === 'sources' && (
@@ -553,6 +564,10 @@ export default function App() {
           onClose={() => setDetail(null)}
           onChanged={changed}
           onGraph={openGraph}
+          onCategorize={(id) => {
+            setDetail(null);
+            setCategoryItem(id);
+          }}
           onOpenSource={(id) => {
             setDetail(null);
             setSource(id);
@@ -564,6 +579,10 @@ export default function App() {
           id={source}
           onClose={() => setSource(null)}
           onChanged={changed}
+          onCategorize={(id) => {
+            setSource(null);
+            setCategoryItem(id);
+          }}
           onGraph={(id) => {
             setSource(null);
             openGraph(id);
@@ -576,6 +595,13 @@ export default function App() {
           onClose={() => setEntity(null)}
           onChanged={changed}
           onGraph={openGraph}
+        />
+      )}
+      {categoryItem && (
+        <CategoryEditor
+          id={categoryItem}
+          onClose={() => setCategoryItem(null)}
+          onChanged={changed}
         />
       )}
       {toast && (
@@ -600,6 +626,7 @@ function GraphView({
   onSelect,
   revision,
   dashboard,
+  onCategorize,
 }: {
   data: GraphResult | null;
   error: string;
@@ -609,23 +636,55 @@ function GraphView({
   onSelect: (id: string, type: string) => void;
   revision: number;
   dashboard: Dashboard | null;
+  onCategorize: (id: string) => void;
 }) {
   const [topic, setTopic] = useState('');
   const [candidates, setCandidates] = useState(false);
   const [project, setProject] = useState('');
+  const [category, setCategory] = useState('');
+  const [scanRevision, setScanRevision] = useState(0);
+  const [scanError, setScanError] = useState('');
+  const [queuing, setQueuing] = useState(false);
+  const categoryStatus = useResource(
+    () => api<CategorizationStatus>('/categories/status'),
+    [scanRevision],
+    2000,
+  );
+  const scan = categoryStatus.data?.job;
+  const busy = queuing || scan?.status === 'queued' || scan?.status === 'running';
+  const scanSignature = `${scan?.id}:${scan?.status}:${scan?.result.scanned}`;
+  const categories = useResource(
+    () => api<CategorySummary[]>(`/categories?include_candidates=${candidates}`),
+    [revision, candidates, scanSignature],
+    8000,
+  );
+  async function rescan() {
+    setQueuing(true);
+    setScanError('');
+    try {
+      await api('/categories/rescan', {});
+      setScanRevision((value) => value + 1);
+    } catch (error) {
+      setScanError(error instanceof Error ? error.message : 'Could not start categorization.');
+    } finally {
+      setQueuing(false);
+    }
+  }
   const filtered = useResource(
     () =>
       api<GraphResult>('/graph', {
         focus_id: focus,
         topic,
         project,
+        category_id: category || undefined,
         include_candidates: candidates,
         hops: 2,
         limit: 150,
       }),
-    [topic, project, candidates, focus, revision],
+    [topic, project, category, candidates, focus, revision, scanSignature],
+    8000,
   );
-  const visible = topic || project || candidates ? filtered.data : data;
+  const visible = filtered.data || (!category ? data : null);
   return (
     <>
       <SectionHeading
@@ -633,6 +692,32 @@ function GraphView({
         title="The shape of what you know."
         description="Ideas, evidence, and context. A graph that grows with you."
       />
+      <div className="category-status">
+        <div>
+          <strong>Automatic organization</strong>
+          <span>
+            {categoryStatus.data?.model_state === 'ready'
+              ? `Local semantic model · ${categoryStatus.data.semantic_pending} pending · ${categoryStatus.data.semantic_errors} errors · ${categoryStatus.data.needs_review} need category review`
+              : categoryStatus.data?.model_state === 'error'
+                ? `Semantic model failed: ${categoryStatus.data.model_error}`
+                : categoryStatus.data?.model_state === 'disabled'
+                  ? 'Semantic model disabled · metadata and keyword fallback'
+                  : 'Preparing local semantic model…'}
+          </span>
+          <span role="status">
+            {busy
+              ? `Categorizing · ${scan?.progress || 0}% · ${scan?.result.scanned || 0} scanned`
+              : scan?.status === 'failed'
+                ? `Scan failed: ${scan.error}`
+                : scan?.status === 'completed'
+                  ? `Scan complete · ${scan.result.scanned} scanned · ${scan.result.categorized || 0} categorized · ${scan.result.uncategorized || 0} uncategorized`
+                  : `${categoryStatus.data?.scanned || 0} of ${categoryStatus.data?.total || 0} items categorized`}
+          </span>
+        </div>
+        <button className="button small" disabled={busy} onClick={() => void rescan()}>
+          Rescan categories
+        </button>
+      </div>
       <div className="graph-filter-bar">
         <select aria-label="Graph topic" value={topic} onChange={(e) => setTopic(e.target.value)}>
           <option value="">All topics</option>
@@ -668,27 +753,53 @@ function GraphView({
         )}
         <span>Drag to orbit · Select a light to follow a connection</span>
       </div>
-      {(error || filtered.error) && (
+      {(error || filtered.error || scanError || categories.error || categoryStatus.error) && (
         <div className="inline-error" role="alert">
-          {error || filtered.error}
+          {error || filtered.error || scanError || categories.error || categoryStatus.error}
         </div>
       )}
-      <div className="full-graph globe-view">
-        {loading && !visible ? (
-          <Loading />
-        ) : (
-          visible && <Graph data={visible} onSelect={onSelect} onFocus={onFocus} />
-        )}
+      <div className="categorized-graph">
+        <CategoryBrowser
+          categories={categories.data || []}
+          selected={category}
+          onSelect={(id) => {
+            setCategory(id);
+            onFocus(undefined);
+          }}
+        />
+        <div className="full-graph globe-view">
+          {loading && !visible ? (
+            <Loading />
+          ) : (
+            visible && (
+              <Graph
+                data={visible}
+                onSelect={(id, type) => {
+                  if (type === 'category') {
+                    setCategory(id);
+                    onFocus(undefined);
+                  } else onSelect(id, type);
+                }}
+                onFocus={onFocus}
+                onCategorize={onCategorize}
+              />
+            )
+          )}
+        </div>
       </div>
       <div className="graph-explanation">
         <GitBranch size={18} />
         <p>
           Connections say <strong>why</strong> two things belong together. The globe is a logical
-          space: positions aren't geographic. Dotted rings await review; amber lights need a fresh
-          check. Select a node to explore its connections and evidence. Imported originals appear as
-          source nodes; review is required to turn extracted claims into accepted knowledge. Large
-          collections show a bounded selection—filter by notebook or open a source's connections to
-          explore further.
+          space: related items cluster around category hubs. Dotted rings await review; amber lights
+          need a fresh check. Select a node to explore its connections and evidence. Imported
+          originals appear as source nodes; review is required to turn extracted claims into
+          accepted knowledge. Large collections show a bounded selection—filter by notebook or open
+          a source's connections to explore further. Categories form broader/narrower branches.
+          Local semantic suggestions use note content, tags and notebook context. Confidence is a
+          model estimate; ambiguous suggestions need your review. Open Organize categories on a note
+          to confirm, dismiss or add categories. Your corrections survive future rescans.
+          Hierarchical tags and original stack/notebook metadata supply explicit branches.
         </p>
       </div>
     </>

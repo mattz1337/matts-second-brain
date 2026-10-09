@@ -39,6 +39,7 @@ import {
 } from './ingestion.js';
 import type { Embeddings } from './embeddings.js';
 import { config } from './config.js';
+import { CategoryService } from './category-service.js';
 import path from 'node:path';
 import { mkdir, readFile, writeFile, stat } from 'node:fs/promises';
 import {
@@ -91,11 +92,19 @@ const knowledgeSelect = `SELECT k.*,
 
 export class BrainService {
   private workerBusy = false;
+  public classification: CategoryService;
   constructor(
     public db: DB,
     public embeddings?: Embeddings,
     public storageRoot = path.join(config.dataDir, 'files'),
-  ) {}
+  ) {
+    this.classification = new CategoryService(
+      db,
+      embeddings,
+      config.categoryMinSimilarity,
+      config.categoryAutoSimilarity,
+    );
+  }
 
   private decorate(raw: Raw & { challenges?: number }, at = new Date()): Knowledge {
     const item = {
@@ -307,6 +316,7 @@ export class BrainService {
       ],
     );
     await this.connect(q, id, input);
+    await this.classification.classify(q, id);
     await this.index(
       q,
       id,
@@ -453,6 +463,7 @@ export class BrainService {
         next.kind === 'factual_assertion' ? 'claim' : 'note',
       ]);
       await this.connect(q, id, next);
+      await this.classification.classify(q, id);
       await this.index(
         q,
         id,
@@ -733,13 +744,17 @@ export class BrainService {
   async processNextJob() {
     if (this.workerBusy) return;
     this.workerBusy = true;
-    let job: { id: string; payload: z.infer<typeof importSchema> } | undefined;
+    let job: { id: string; payload: z.infer<typeof importSchema> & { kind?: string } } | undefined;
     try {
       job = await one(
         this.db,
         "UPDATE jobs SET status='running',stage='reading',progress=10,attempts=attempts+1,updated_at=now() WHERE id=(SELECT id FROM jobs WHERE status='queued' ORDER BY created_at LIMIT 1) RETURNING id,payload",
       );
       if (!job) return;
+      if (job.payload.kind === 'categorization') {
+        await this.classification.run(job.id);
+        return;
+      }
       const input = job.payload;
       let parsed;
       let origin = 'text';
@@ -832,6 +847,7 @@ export class BrainService {
           [source.id, sourceHash],
         );
         if (existing) {
+          await this.classification.classify(q, source.id);
           const count = await one<{ n: number }>(
             q,
             'SELECT count(DISTINCT e.knowledge_id)::int AS n FROM evidence e JOIN passages p ON p.id=e.passage_id WHERE p.revision_id=$1',
@@ -870,6 +886,7 @@ export class BrainService {
           'INSERT INTO revisions(id,source_id,content_hash,text,original_base64,parser) VALUES($1,$2,$3,$4,$5,$6)',
           [revisionId, source.id, sourceHash, parsed.text, parsed.original || null, parsed.parser],
         );
+        await this.classification.classify(q, source.id);
         const passageIds: string[] = [];
         for (const chunk of chunks) {
           const id = randomUUID();
@@ -1045,6 +1062,7 @@ export class BrainService {
           [originKey, revisionHash],
         );
         if (existing) {
+          await this.db.transaction((q) => this.classification.classify(q, existing.source_id));
           if (importInput.note_station?.extract_claims && !note.unreadable) {
             const extracted = await one(
               this.db,
@@ -1150,6 +1168,7 @@ export class BrainService {
             "INSERT INTO revisions(id,source_id,content_hash,text,original_base64,parser) VALUES($1,$2,$3,$4,$5,'synology-nsx-json-v1')",
             [revisionId, source.id, revisionHash, note.text, note.original.toString('base64')],
           );
+          await this.classification.classify(q, source.id);
           const passageIds: string[] = [];
           for (const chunk of chunks) {
             const id = randomUUID();
@@ -1489,7 +1508,7 @@ export class BrainService {
   async graph(actor: Actor, raw: unknown): Promise<GraphResult> {
     scope(actor, 'brain:read');
     const input = graphSchema.parse(raw);
-    const items = (await this.allKnowledge(actor)).filter(
+    let items = (await this.allKnowledge(actor)).filter(
       (k) =>
         (k.lifecycle === 'active' ||
           (input.include_candidates && k.lifecycle === 'candidate') ||
@@ -1497,29 +1516,59 @@ export class BrainService {
         (!input.topic || k.tags.includes(input.topic)) &&
         (!input.project || k.project === input.project),
     );
-    const ids = items.map((k) => k.id);
-    const sources = (await this.sources(actor)).filter(
+    let sources = (await this.sources(actor)).filter(
       (source) =>
         source.status === 'active' &&
         (!input.topic || source.tags.includes(input.topic)) &&
         (!input.project || source.project === input.project),
     );
-    const eligibleIds = new Set([...ids, ...sources.map((source) => source.id)]);
     const allNodes = await rows<{ id: string; type: GraphNode['type']; label: string }>(
       this.db,
       'SELECT * FROM nodes',
     );
+    const relations = await rows<GraphEdge>(
+      this.db,
+      'SELECT id,source_node AS source,target_node AS target,type,properties FROM relations',
+    );
+    if (input.category_id) {
+      requireCondition(
+        allNodes.some((node) => node.id === input.category_id && node.type === 'category'),
+        404,
+        'not_found',
+        'Category not found.',
+      );
+      const descendants = new Set([input.category_id]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const edge of relations)
+          if (
+            edge.type === 'category_parent' &&
+            descendants.has(edge.target) &&
+            !descendants.has(edge.source)
+          ) {
+            descendants.add(edge.source);
+            changed = true;
+          }
+      }
+      const members = new Set(
+        relations
+          .filter((edge) => edge.type === 'categorized_as' && descendants.has(edge.target))
+          .map((edge) => edge.source),
+      );
+      items = items.filter((item) => members.has(item.id));
+      sources = sources.filter((source) => members.has(source.id));
+    }
+    const eligibleIds = new Set([
+      ...items.map((item) => item.id),
+      ...sources.map((source) => source.id),
+    ]);
     const permitted = new Set(
       allNodes
         .filter((n) => !['claim', 'note', 'source'].includes(n.type) || eligibleIds.has(n.id))
         .map((n) => n.id),
     );
-    const allEdges = (
-      await rows<GraphEdge>(
-        this.db,
-        'SELECT id,source_node AS source,target_node AS target,type FROM relations',
-      )
-    ).filter((e) => permitted.has(e.source) && permitted.has(e.target));
+    const allEdges = relations.filter((e) => permitted.has(e.source) && permitted.has(e.target));
     let keep = new Set<string>(eligibleIds);
     if (input.focus_id) {
       requireCondition(
@@ -1539,17 +1588,62 @@ export class BrainService {
         }
       keep = next;
     }
+    // Category ancestors travel with their children even beyond the neighborhood hop bound.
+    let addedParent = true;
+    while (addedParent) {
+      addedParent = false;
+      for (const edge of allEdges)
+        if (edge.type === 'category_parent' && keep.has(edge.source) && !keep.has(edge.target)) {
+          keep.add(edge.target);
+          addedParent = true;
+        }
+    }
     const ordered = allNodes.filter((n) => keep.has(n.id));
-    const selected = ordered
-      .sort((a, b) =>
-        a.id === input.focus_id
-          ? -1
-          : b.id === input.focus_id
-            ? 1
-            : Number(['topic', 'project', 'entity'].includes(b.type)) -
-                Number(['topic', 'project', 'entity'].includes(a.type)) || a.id.localeCompare(b.id),
-      )
-      .slice(0, input.limit);
+    const nodeMap = new Map(ordered.map((node) => [node.id, node]));
+    const selectedMap = new Map<string, (typeof ordered)[number]>();
+    const categoryTargets = new Map<string, string[]>();
+    for (const edge of allEdges)
+      if (['categorized_as', 'category_parent'].includes(edge.type) && keep.has(edge.target)) {
+        if (!categoryTargets.has(edge.source)) categoryTargets.set(edge.source, []);
+        categoryTargets.get(edge.source)!.push(edge.target);
+      }
+    const addBundle = (node: (typeof ordered)[number]) => {
+      if (selectedMap.has(node.id) || selectedMap.size >= input.limit) return;
+      const bundle = new Set([node.id]);
+      const pending = [node.id];
+      while (pending.length) {
+        const current = pending.pop()!;
+        for (const target of categoryTargets.get(current) || [])
+          if (!bundle.has(target)) {
+            bundle.add(target);
+            pending.push(target);
+          }
+      }
+      const newIds = [...bundle].filter((id) => !selectedMap.has(id));
+      if (selectedMap.size + newIds.length > input.limit) return;
+      for (const id of newIds) selectedMap.set(id, nodeMap.get(id)!);
+    };
+    if (input.focus_id) selectedMap.set(input.focus_id, nodeMap.get(input.focus_id)!);
+    // Sample across category branches so a large notebook doesn't consume the entire view.
+    const groups = new Map<string, typeof ordered>();
+    for (const node of ordered
+      .filter((node) => eligibleIds.has(node.id))
+      .sort((a, b) => a.id.localeCompare(b.id))) {
+      const category = categoryTargets.get(node.id)?.[0] || '';
+      if (!groups.has(category)) groups.set(category, []);
+      groups.get(category)!.push(node);
+    }
+    const queues = [...groups.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([, nodes]) => nodes);
+    for (let i = 0; queues.some((queue) => queue.length > i); i++)
+      for (const queue of queues) if (queue[i]) addBundle(queue[i]);
+    for (const node of ordered.sort(
+      (a, b) =>
+        Number(b.type === 'category') - Number(a.type === 'category') || a.id.localeCompare(b.id),
+    ))
+      addBundle(node);
+    const selected = [...selectedMap.values()];
     const selectedIds = new Set(selected.map((n) => n.id));
     const byId = new Map(items.map((k) => [k.id, k]));
     const edges = allEdges
@@ -1736,6 +1830,8 @@ export class BrainService {
       'tombstones',
       'entity_merges',
       'source_attachments',
+      'categorizations',
+      'category_decisions',
     ];
     const data: Record<string, unknown[]> = {};
     for (const table of tables) data[table] = await rows(this.db, `SELECT * FROM ${table}`);
@@ -1837,12 +1933,31 @@ export class BrainService {
       passages: ['id', 'revision_id', 'text', 'anchor', 'start_offset', 'end_offset'],
       evidence: ['id', 'knowledge_id', 'passage_id', 'relation', 'rationale', 'created_at'],
       entities: ['id', 'canonical', 'type', 'aliases'],
-      relations: ['id', 'source_node', 'target_node', 'type', 'backing_claim', 'created_at'],
+      relations: [
+        'id',
+        'source_node',
+        'target_node',
+        'type',
+        'backing_claim',
+        'created_at',
+        'properties',
+      ],
       versions: ['id', 'knowledge_id', 'version', 'snapshot', 'recorded_at'],
       reviews: ['id', 'knowledge_id', 'version', 'actor', 'decision', 'rationale', 'created_at'],
       tombstones: ['id', 'deleted_at'],
       entity_merges: ['id', 'from_id', 'to_id', 'snapshot', 'undone_at', 'created_at'],
       source_attachments: ['id', 'revision_id', 'name', 'mime', 'size', 'content_hash'],
+      categorizations: [
+        'node_id',
+        'engine_version',
+        'input_hash',
+        'scanned_at',
+        'semantic_state',
+        'suggestions',
+        'decision_version',
+        'error',
+      ],
+      category_decisions: ['node_id', 'category_id', 'decision', 'actor', 'updated_at'],
     };
     for (const [digest, encoded] of Object.entries(archive.files || {})) {
       requireCondition(
@@ -1892,7 +2007,14 @@ export class BrainService {
       for (const [table, columns] of Object.entries(allowed)) {
         const entries =
           archive.data![table] ||
-          (['entity_merges', 'source_attachments'].includes(table) ? [] : undefined);
+          ([
+            'entity_merges',
+            'source_attachments',
+            'categorizations',
+            'category_decisions',
+          ].includes(table)
+            ? []
+            : undefined);
         requireCondition(
           Array.isArray(entries) && entries.length <= 200000,
           400,
@@ -1907,11 +2029,16 @@ export class BrainService {
             'Invalid export record.',
           );
           const values = columns.map((c) =>
-            ['tags', 'aliases', 'snapshot', 'metadata'].includes(c)
+            ['tags', 'aliases', 'snapshot', 'metadata', 'properties', 'suggestions'].includes(c)
               ? entry[c] === undefined
-                ? null
+                ? c === 'properties'
+                  ? '{}'
+                  : c === 'suggestions'
+                    ? '[]'
+                    : null
                 : stringify(entry[c])
-              : (entry[c] ?? null),
+              : (entry[c] ??
+                (c === 'semantic_state' ? 'pending' : c === 'decision_version' ? 0 : null)),
           );
           await q.query(
             `INSERT INTO ${table}(${columns.join(',')}) VALUES(${columns.map((_, i) => `$${i + 1}`).join(',')})${table === 'tombstones' ? ' ON CONFLICT DO NOTHING' : ''}`,
@@ -1943,6 +2070,11 @@ export class BrainService {
       );
       for (const p of passages)
         await this.index(q, p.id, p.title, p.text, [...p.tags, p.project].join(' '), true);
+      const classified = await rows<{ id: string }>(
+        q,
+        "SELECT id FROM nodes WHERE type IN ('claim','note','source')",
+      );
+      for (const node of classified) await this.classification.classify(q, node.id, true);
       return { restored: items.length, sources: archive.data!.sources.length };
     });
   }

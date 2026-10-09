@@ -19,6 +19,7 @@
     "check": "tsc --noEmit",
     "models:download": "tsx scripts/download-model.ts",
     "test:semantic": "tsx scripts/semantic-smoke.ts",
+    "test:categories:semantic": "tsx scripts/category-semantic-smoke.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "nsx:inspect": "tsx scripts/inspect-nsx.ts",

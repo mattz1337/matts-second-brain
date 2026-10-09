@@ -33,7 +33,7 @@ describe('official MCP client interoperability', () => {
           requestInit: { headers: { Authorization: `Bearer ${keys.assistant}` } },
         }),
       );
-      expect((await remote.listTools()).tools).toHaveLength(10);
+      expect((await remote.listTools()).tools).toHaveLength(14);
       const add = await remote.callTool({
         name: 'add_knowledge',
         arguments: {
@@ -71,7 +71,7 @@ describe('official MCP client interoperability', () => {
           stderr: 'pipe',
         }),
       );
-      expect((await local.listTools()).tools).toHaveLength(10);
+      expect((await local.listTools()).tools).toHaveLength(14);
       const localRead = await local.callTool({ name: 'get_knowledge', arguments: { id } });
       expect(toolData(localRead).statement).toContain('preserve');
       await readOnly.connect(

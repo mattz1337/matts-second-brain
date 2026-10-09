@@ -21,7 +21,7 @@ The stack is React 19, Vite 7, Three.js, Express 5, Zod, PGlite/pgvector, Transf
 | Search   | PostgreSQL lexical search + local 384-dimensional E5 embeddings + reciprocal rank fusion + bounded typed graph expansion                            |
 | Ask      | A structured evidence digest with claim citations, quality dimensions, retained passages, and explicit knowledge gaps                               |
 | Explore  | Interactive graph and table, one/two-hop focus, topic/status filters, node inspection, named-entity merge/undo                                      |
-| Reuse    | All ten planned MCP tools; authenticated HTTP and stdio transports; identical services behind REST and MCP                                          |
+| Reuse    | Fourteen MCP tools including category suggestions/corrections/rescan; authenticated HTTP and stdio transports; shared REST/MCP services             |
 | Control  | Reversible archival, live-data deletion, source derivative purge, export, empty-database restore, and index rebuilding                              |
 
 ## Knowledge globe update (9 October 2026)
@@ -31,6 +31,24 @@ The flat graph was replaced with a WebGL globe: atmospheric glow, a latitude/lon
 Drag or swipe to orbit, scroll/pinch or use buttons to zoom, and select a light or use the keyboard-accessible node finder. Selection pauses the orbit, highlights real connected edges, and offers typed connection navigation, evidence inspection, and a bounded graph focus. The dashboard also renders a compact globe. Decorative stars and the orbit guide are separate from actual knowledge nodes.
 
 Motion can be paused and respects the operating system's reduced-motion preference, including camera transitions. GPU rendering pauses offscreen or in a hidden tab; graphics resources and input listeners are released when switching views. A failed/lost WebGL context falls back to the knowledge table. Topic/candidate filtering, graph limits, and canonical data remain server-controlled.
+
+## Category hierarchy update (9 October 2026)
+
+Category nodes and typed `categorized_as` / `category_parent` relations add a real taxonomy to the graph. Assignments retain an engine version, method, and readable rationale. Local English/German keyword rules propose up to three subject categories; ambiguous text receives an Uncategorized node. Hierarchical tags supply explicit custom branches. Original stack and notebook metadata supplies a separate Notebooks tree. This is a deterministic suggestion engine with a fixed initial taxonomy, not unrestricted semantic classification or evidence verification.
+
+Capture, edits, original-source imports, and extracted candidates categorize inside their database transactions. Schema migration 5 adds categorization fingerprints and relationship properties. Existing data gets a durable startup backfill; the graph's Rescan categories button or MCP `rescan_categories` queues a full rebuild. Concurrent queue requests reuse a running job, repeated rescans retain canonical category IDs and link IDs, and interrupted scans recover through the existing worker. Rescans change only organization metadata, leaving originals, evidence, verification, versions, and lifecycle intact. Export preserves categorization provenance; legacy backups rebuild it during restore.
+
+The graph has a collapsible category tree with unique descendant item counts and branch filters. The globe clusters related items around broader category hubs. Bounded samples include category ancestors and sample across branches. Candidate/archived/source visibility still applies. REST exposes category list/status/rescan, and MCP adds category browsing plus rescan tools. Browser and database checks cover branching, bilingual matching, candidate visibility, NSX metadata, rescan recovery, verification preservation, export compatibility, filtering, and mobile layout.
+
+## Semantic categories and corrections update (9 October 2026)
+
+The initial keyword-only classifier was insufficient for the imported collection. Categorization now uses the local multilingual E5 model to compare title, readable content, tags, and project/notebook/stack context against 24 bilingual subject descriptions and up to 100 user-defined category leaves. The inference path uses `query:` prefixes for both note windows and category descriptions, as recommended for classification features in the [E5 model card](https://huggingface.co/intfloat/multilingual-e5-small). Category prototypes are cached per model instance. At most eight distributed windows sample long notes; this bounds inference cost but does not exhaustively cover arbitrary-length documents.
+
+Up to three suggestions retain model ID, cosine similarity, runner-up separation, confidence grade, and automatic-assignment status. The suggestion floor defaults to 0.78; automatic assignments require 0.82 plus a separation guard (or a very strong score), with a stricter secondary-category threshold. Confidence is a heuristic rather than a calibrated probability. Strong matches appear as Suggested graph memberships; ambiguous matches remain reviewable without forcing a category. A real-model bilingual fixture check covers paraphrases about printing, cooking and travel, plus abstention on ambiguous text. It is not a representative corpus accuracy benchmark.
+
+New writes persist metadata/provisional categories and enqueue inference; inference runs outside database transactions, checks fingerprints before committing, and shares a serialized model queue with search/indexing. Full rescans own the category worker while running. Pending, disabled and failed model states remain visible, and item errors are persisted. A lexical-only configuration retains metadata/keyword fallback and does not claim semantic analysis.
+
+Schema migration 6 stores independent owner accept/dismiss decisions and category-decision versions. Organize categories is accessible from source details, knowledge details and globe selections. The owner can confirm, dismiss, add custom parent/child paths, or undo decisions. Corrections survive edits, model rescans and export/restore; ordinary assistant credentials may read suggestions but cannot override owner decisions. The API and two additional MCP tools expose inspection and versioned correction. Category decisions never change knowledge verification or version history.
 
 ## Note Station migration update (9 October 2026)
 
@@ -85,11 +103,12 @@ Public URL imports validate all resolved addresses, pin the chosen address for t
 
 Commands and reproducible fixtures are included in the repository:
 
-Current validation: 49 tests (31 integration/MCP, 13 NSX migration/backup checks, and 5 globe geometry checks) and 5 browser workflows passed. The separate real-model semantic smoke check also passed during the original spike. These results are fixture verification, not the PRD's proposed large-corpus quality/performance evaluation.
+Current validation: 66 tests (31 integration/MCP, 13 NSX migration/backup checks, 8 category hierarchy checks, 8 semantic/correction checks, and 6 globe geometry checks) and 7 browser workflows passed. The separate real-model semantic smoke check also passed during the original spike. These results are fixture verification, not the PRD's proposed large-corpus quality/performance evaluation.
 
 - `npm test`: lifecycle, idempotency, exact source offsets, PDF/HTML extraction, lineages/challenges, retraction, conflicts, supersession, temporal/recorded-time search, bounded graph, recoverable imports, filesystem restart, source/item deletion, export/restore, batch reviews, merge/undo, real pgvector distances, HTTP boundaries, and MCP scopes.
-- Official MCP client tests initialize/discover ten tools, write/read knowledge, reject review escalation, verify reader write denial, and exercise both Streamable HTTP and stdio.
+- Official MCP client tests initialize/discover fourteen tools, write/read knowledge, reject review escalation, verify reader write denial, and exercise both Streamable HTTP and stdio.
 - `npm run test:semantic`: real English/German inference and an unrelated negative query.
+- `npm run test:categories:semantic`: real bilingual semantic category rankings and abstention on ambiguous text. Database checks cover owner decisions across rescans/backups, inference races, and model-error recovery; browser checks cover source/knowledge correction controls and persistence after rescan.
 - `npm run test:e2e`: build/typecheck and Chrome workflows for capture/edit/archive/restore/forget; Markdown upload/accept/verify/source inspection; live WebGL animation, light picking, camera controls, evidence inspection and graph focus; graph/list/settings; a 390px mobile viewport without horizontal overflow; reduced-motion stability and WebGL failure/recovery.
 - Desktop, mobile, graph list, and evidence screenshots are generated under `.data/screenshots` and were visually inspected.
 

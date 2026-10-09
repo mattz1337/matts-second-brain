@@ -3,6 +3,26 @@ import { globeArc, globePositions, type Point3 } from '../src/globe-layout';
 import type { GraphNode } from '../shared/contracts';
 
 describe('knowledge globe geometry', () => {
+  it('clusters category members near their root and retains stable spherical positions', () => {
+    const nodes: GraphNode[] = [
+      { id: 'tech', label: 'Technology', type: 'category' },
+      { id: 'data', label: 'Data & AI', type: 'category' },
+      { id: 'life', label: 'Life', type: 'category' },
+      { id: 'a', label: 'SQL', type: 'note' },
+      { id: 'b', label: 'Travel', type: 'note' },
+    ];
+    const edges = [
+      { id: '1', source: 'data', target: 'tech', type: 'category_parent' },
+      { id: '2', source: 'a', target: 'data', type: 'categorized_as' },
+      { id: '3', source: 'b', target: 'life', type: 'categorized_as' },
+    ];
+    const positions = globePositions(nodes, 1.62, edges);
+    expect(globePositions([...nodes].reverse(), 1.62, [...edges].reverse())).toEqual(positions);
+    for (const point of positions.values()) expect(Math.hypot(...point)).toBeCloseTo(1.62);
+    const distance = (a: string, b: string) =>
+      Math.hypot(...positions.get(a)!.map((value, i) => value - positions.get(b)![i]));
+    expect(distance('a', 'tech')).toBeLessThan(distance('a', 'life'));
+  });
   it('keeps API reorderings stable and places every node on the sphere', () => {
     const nodes: GraphNode[] = Array.from({ length: 150 }, (_, i) => ({
       id: `node-${i}`,

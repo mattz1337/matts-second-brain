@@ -162,6 +162,10 @@ Use Streamable HTTP for protected remote access and stdio for local integrations
 - Knowledge detail separates “accepted by me” from “verified against evidence.”
 - Review queue prioritizes changing/high-use/project-relevant knowledge rather than treating every old item equally.
 - Graph opens around the current topic/project, with evidence nodes collapsed by default.
+- Categories are first-class nodes with broader/narrower relationships and typed item memberships. New sources and knowledge are categorized automatically; organization suggestions include their method/rationale and remain distinct from factual verification.
+- The graph offers category parent/child browsing, descendant counts, inclusive branch filters, and category-centered globe groups. Explicit hierarchical tags and original stack/notebook structure survive imports.
+- Existing collections can rescan categorization through the web app or MCP, with persistent progress, restart recovery, and safe repeated runs. Rescans preserve original sources, evidence, tags, review state, and version history. Unknown topics remain explicit instead of receiving an unsupported label.
+- Semantic category suggestions use note content and metadata, show confidence and uncertainty, and permit owner confirmation, dismissal, custom paths and undo. Manual decisions survive later edits, model rescans and backups; assistants cannot override owner corrections. Confidence is separate from factual verification.
 - Graph states are explained in a legend and an accessible table/list; color is not the only signal.
 - Conflicts show both sides and their scopes; the UI offers resolve, keep both with context, or leave contested.
 - Empty/insufficient results explain which knowledge is missing and provide a capture/import action.

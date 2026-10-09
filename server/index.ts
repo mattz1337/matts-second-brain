@@ -13,6 +13,7 @@ const embeddings = new Embeddings(db);
 const service = new BrainService(db, embeddings);
 await service.recoverJobs();
 if (config.seedDemo) await seedDemo(service);
+await service.classification.ensureBackfill();
 const app = createApp(service, await credentials(config.dataDir), config.port);
 const server = app.listen(config.port, '127.0.0.1', () =>
   console.log(`Commonplace: http://127.0.0.1:${config.port} · MCP: /mcp · private local profile`),
@@ -21,6 +22,7 @@ void embeddings.initialize();
 const worker = setInterval(() => {
   void service.processNextJob();
   void embeddings.indexPending();
+  void service.classification.processPending();
 }, 1000);
 let closing = false;
 async function shutdown() {

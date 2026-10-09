@@ -10,6 +10,7 @@ export const globeColors: Record<GraphNode['type'], string> = {
   topic: '#c6b0f0',
   project: '#f0d28c',
   source: '#aed0c6',
+  category: '#f4cf79',
 };
 
 export interface GlobeScene {
@@ -181,7 +182,7 @@ export function createGlobeScene(
       }),
     ),
   );
-  const positions = globePositions(data.nodes);
+  const positions = globePositions(data.nodes, 1.62, data.edges);
   const byId = new Map(data.nodes.map((node) => [node.id, node]));
   const nodeMeshes: THREE.Mesh[] = [];
   const nodeGeometry = new THREE.SphereGeometry(1, 16, 12);
@@ -201,12 +202,12 @@ export function createGlobeScene(
   const rings: THREE.Mesh[] = [];
   for (const [i, node] of data.nodes.entries()) {
     const position = new THREE.Vector3(...positions.get(node.id)!);
-    const hub = node.type === 'topic' || node.type === 'project';
+    const hub = ['topic', 'project', 'category'].includes(node.type);
     const overdue = ['stale', 'expired', 'review_due'].includes(node.freshness || '');
     const color = overdue ? '#efb879' : globeColors[node.type];
     const mesh = new THREE.Mesh(nodeGeometry, new THREE.MeshBasicMaterial({ color }));
     mesh.position.copy(position);
-    mesh.scale.setScalar(hub ? 0.055 : 0.037);
+    mesh.scale.setScalar(node.type === 'category' ? 0.065 : hub ? 0.055 : 0.037);
     mesh.userData.node = node;
     scene.add(mesh);
     nodeMeshes.push(mesh);
@@ -256,7 +257,12 @@ export function createGlobeScene(
     const line = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints(points),
       new THREE.LineBasicMaterial({
-        color: 0x7bbda7,
+        color:
+          edge.type === 'category_parent'
+            ? 0xf4cf79
+            : edge.type === 'categorized_as'
+              ? 0xc3b08a
+              : 0x7bbda7,
         transparent: true,
         opacity: 0.36,
         depthWrite: false,
@@ -404,13 +410,14 @@ export function createGlobeScene(
     candidates.sort(
       (a, b) =>
         Number(b.node.id === selected) - Number(a.node.id === selected) ||
-        Number(['topic', 'project'].includes(b.node.type)) -
-          Number(['topic', 'project'].includes(a.node.type)),
+        Number(['category', 'topic', 'project'].includes(b.node.type)) -
+          Number(['category', 'topic', 'project'].includes(a.node.type)),
     );
     const shown = new Set(candidates.slice(0, options.compact ? 3 : 7));
     for (const label of labels) {
       const show =
-        shown.has(label) && (!options.compact || ['topic', 'project'].includes(label.node.type));
+        shown.has(label) &&
+        (!options.compact || ['category', 'topic', 'project'].includes(label.node.type));
       label.element.style.opacity = show ? '1' : '0';
       if (!show) continue;
       projected.copy(label.position).project(camera);

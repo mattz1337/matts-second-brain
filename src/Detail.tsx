@@ -23,12 +23,14 @@ export default function Detail({
   onChanged,
   onGraph,
   onOpenSource,
+  onCategorize,
 }: {
   id: string;
   onClose: () => void;
   onChanged: () => void;
   onGraph: (id: string) => void;
   onOpenSource: (id: string) => void;
+  onCategorize: (id: string) => void;
 }) {
   const [item, setItem] = useState<DetailType | null>(null);
   const [error, setError] = useState('');
@@ -202,6 +204,9 @@ export default function Detail({
             </div>
           )}
           <div className="detail-toolbar">
+            <button className="button small" onClick={() => onCategorize(id)}>
+              Organize categories
+            </button>
             <button className="button small" onClick={() => setEdit(true)}>
               <PenLine size={14} />
               Edit

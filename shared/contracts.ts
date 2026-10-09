@@ -95,6 +95,7 @@ export interface SourceBrowseResult {
   total: number;
 }
 export const graphSchema = z.object({
+  category_id: z.string().uuid().optional(),
   focus_id: z.string().uuid().optional(),
   topic: z.string().max(60).default(''),
   project: z.string().max(100).default(''),
@@ -236,6 +237,9 @@ export interface ImportJob {
     skipped?: number;
     attachments?: number;
     total?: number;
+    scanned?: number;
+    categorized?: number;
+    uncategorized?: number;
   };
   created_at: string;
   updated_at: string;
@@ -244,7 +248,7 @@ export interface ImportJob {
 export interface GraphNode {
   id: string;
   label: string;
-  type: 'claim' | 'note' | 'entity' | 'topic' | 'project' | 'source';
+  type: 'claim' | 'note' | 'entity' | 'topic' | 'project' | 'source' | 'category';
   lifecycle?: string;
   freshness?: Freshness;
   evidence_status?: string;
@@ -254,7 +258,72 @@ export interface GraphEdge {
   source: string;
   target: string;
   type: string;
+  properties?: {
+    method?: string;
+    rationale?: string;
+    engine_version?: string;
+    confidence?: 'high' | 'medium' | 'low';
+    similarity?: number;
+    margin?: number;
+    model_id?: string;
+    status?: string;
+    chunks?: number;
+    truncated?: boolean;
+  };
 }
+export interface CategorySummary {
+  id: string;
+  label: string;
+  parent_id: string | null;
+  direct_count: number;
+  count: number;
+}
+export interface CategorizationStatus {
+  engine_version: string;
+  total: number;
+  scanned: number;
+  pending: number;
+  job: ImportJob | null;
+  semantic_pending: number;
+  semantic_errors: number;
+  suggested: number;
+  needs_review: number;
+  model_state: string;
+  model_error: string | null;
+}
+export interface ItemCategory {
+  category_id: string;
+  path: string[];
+  method: string;
+  rationale: string;
+  confidence?: 'high' | 'medium' | 'low';
+  similarity?: number;
+  margin?: number;
+  auto_applied?: boolean;
+  status?: string;
+  decision?: 'accept' | 'dismiss';
+}
+export interface ItemCategories {
+  node_id: string;
+  title: string;
+  decision_version: number;
+  semantic_state: string;
+  error: string | null;
+  assigned: ItemCategory[];
+  suggestions: ItemCategory[];
+  decisions: ItemCategory[];
+}
+export const categoryDecisionSchema = z
+  .object({
+    expected_version: z.number().int().min(0),
+    action: z.enum(['accept', 'dismiss', 'reset']),
+    category_id: z.string().uuid().optional(),
+    path: z.array(z.string().trim().min(1).max(80)).min(1).max(5).optional(),
+  })
+  .refine(
+    (input) => Boolean(input.category_id) !== Boolean(input.path),
+    'Choose a category ID or a new category path.',
+  );
 export interface GraphResult {
   nodes: GraphNode[];
   edges: GraphEdge[];

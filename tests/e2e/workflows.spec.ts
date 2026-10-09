@@ -3,6 +3,134 @@ import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { nsxFixture, media } from '../fixtures/nsx.js';
 
+test('owner category confirmations and dismissals survive a rescan and appear in the graph', async ({
+  page,
+}) => {
+  const marker = `ManualCategories-${Date.now()}`;
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Capture an idea' }).click();
+  await page.getByLabel('Title', { exact: true }).fill(marker);
+  await page
+    .getByLabel('Your knowledge', { exact: true })
+    .fill('Cooking recipes list ingredients for baking.');
+  await page.getByRole('button', { name: 'Save knowledge', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Knowledge saved');
+  await page.getByRole('button', { name: 'Knowledge library', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Search library', exact: true }).fill(marker);
+  await page.getByRole('button', { name: new RegExp(marker) }).click();
+  await page.getByRole('button', { name: 'Organize categories', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Organize categories' });
+  await editor
+    .getByRole('button', { name: 'Confirm category: Life / Food & cooking', exact: true })
+    .click();
+  await expect(editor.getByText('Confirmed', { exact: true })).toBeVisible();
+  await editor
+    .getByRole('button', { name: 'Dismiss category: Life / Food & cooking', exact: true })
+    .click();
+  await expect(
+    editor.getByRole('button', { name: 'Undo dismissal: Life / Food & cooking', exact: true }),
+  ).toBeVisible();
+  await editor.getByLabel('Add a category or hierarchy').fill('Personal / Workshop');
+  await editor.getByRole('button', { name: 'Add category', exact: true }).click();
+  await expect(
+    editor.locator('.assigned-categories').getByText('Personal / Workshop', { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: path.resolve('.data/screenshots/category-corrections.png'),
+    fullPage: true,
+  });
+  await editor.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await page.getByRole('button', { name: 'Knowledge graph', exact: true }).click();
+  await page.getByRole('button', { name: 'Rescan categories', exact: true }).click();
+  await expect(page.locator('.category-status [role="status"]')).toContainText('Scan complete', {
+    timeout: 30000,
+  });
+  await page
+    .getByRole('navigation', { name: 'Knowledge categories' })
+    .getByRole('button', { name: /Workshop/ })
+    .click();
+  await page.getByRole('button', { name: 'List', exact: true }).click();
+  await page.locator('.globe-list').getByRole('button', { name: marker, exact: true }).click();
+  await page.getByRole('button', { name: 'Organize categories', exact: true }).click();
+  await expect(
+    editor.locator('.assigned-categories').getByText('Personal / Workshop', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    editor.getByRole('button', { name: 'Undo dismissal: Life / Food & cooking', exact: true }),
+  ).toBeVisible();
+  await expect(
+    editor.locator('.assigned-categories').getByText('Life / Food & cooking', { exact: true }),
+  ).not.toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+});
+
+test('categorizes new content, explores parent branches and rescans existing knowledge', async ({
+  page,
+}) => {
+  const marker = `CategoryRecipe-${Date.now()}`;
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Capture an idea' }).click();
+  await page.getByLabel('Title', { exact: true }).fill(marker);
+  await page
+    .getByLabel('Your knowledge', { exact: true })
+    .fill('Cooking recipes list ingredients for baking bread.');
+  await page.getByRole('button', { name: 'Save knowledge', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Knowledge saved');
+  await page.getByRole('button', { name: 'Knowledge graph', exact: true }).click();
+  const browser = page.getByRole('navigation', { name: 'Knowledge categories' });
+  const category = browser.getByRole('button', { name: /Food & cooking/ });
+  await expect(category).toBeVisible();
+  await category.click();
+  await expect(category).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'List', exact: true }).click();
+  await expect(page.getByRole('cell', { name: marker, exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Life', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Food & cooking', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Rescan categories', exact: true }).click();
+  await expect(page.locator('.category-status [role="status"]')).toContainText('Scan complete', {
+    timeout: 30000,
+  });
+  await expect(page.getByRole('button', { name: 'Rescan categories', exact: true })).toBeEnabled();
+  await expect(page.getByRole('cell', { name: marker, exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Globe', exact: true }).click();
+  const select = page.getByLabel('Find a graph node');
+  const item = await select
+    .locator('option')
+    .evaluateAll((options) =>
+      options
+        .find((option) => option.textContent?.startsWith('CategoryRecipe-'))
+        ?.getAttribute('value'),
+    );
+  await select.selectOption(item!);
+  await expect(page.locator('.category-reason')).toContainText('Local keyword rule matched');
+  // A write outside this React session must also appear without refreshing the graph.
+  const externalMarker = `ExternalRecipe-${Date.now()}`;
+  const response = await page.request.post('/api/knowledge', {
+    headers: { Origin: 'http://127.0.0.1:4311' },
+    data: {
+      title: externalMarker,
+      statement: 'Cooking recipes include ingredients for baking.',
+      idempotency_key: crypto.randomUUID(),
+    },
+  });
+  expect(response.ok()).toBe(true);
+  await expect(select.locator('option').filter({ hasText: externalMarker })).toHaveCount(1, {
+    timeout: 15000,
+  });
+  await page.waitForTimeout(500);
+  await page.screenshot({
+    path: path.resolve('.data/screenshots/category-globe.png'),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+});
+
 test('overview, graph exploration, settings, and responsive layout', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -173,6 +301,13 @@ test('Note Station archive preview, notebook selection, retained dates, attachme
   const download = await pending;
   expect(download.suggestedFilename()).toBe('Messung ä.txt');
   expect(await readFile((await download.path())!)).toEqual(media);
+  await dialog.getByRole('button', { name: 'Organize categories', exact: true }).click();
+  const categoryEditor = page.getByRole('dialog', { name: 'Organize categories' });
+  await expect(
+    categoryEditor.getByText('Notebooks / Research / Labor', { exact: true }),
+  ).toBeVisible();
+  await categoryEditor.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await page.getByRole('button', { name: /Versuch α/ }).click();
   await page.screenshot({ path: path.resolve('.data/screenshots/nsx-source.png'), fullPage: true });
   await dialog.getByRole('button', { name: 'Close dialog' }).click();
   await page.getByRole('button', { name: 'Knowledge library', exact: true }).click();
