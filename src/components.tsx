@@ -20,15 +20,21 @@ export function KnowledgeCard({
   item,
   onOpen,
   compact = false,
+  selected,
 }: {
   item: Knowledge;
   onOpen: (id: string) => void;
   compact?: boolean;
+  selected?: boolean;
 }) {
   const supported = ['cited', 'corroborated'].includes(item.evidence_status);
   const stale = ['stale', 'review_due'].includes(item.freshness);
   return (
-    <button className={`knowledge-card ${compact ? 'small' : ''}`} onClick={() => onOpen(item.id)}>
+    <button
+      className={`knowledge-card ${compact ? 'small' : ''} ${selected ? 'is-selected' : ''}`}
+      aria-pressed={selected}
+      onClick={() => onOpen(item.id)}
+    >
       <div className={`knowledge-icon ${item.kind === 'factual_assertion' ? 'sage' : 'amber'}`}>
         {item.kind === 'factual_assertion' ? <FileText size={18} /> : <Lightbulb size={18} />}
       </div>

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import LibraryReader, { type LibrarySelection } from './LibraryReader';
 import {
   Search,
   SlidersHorizontal,
@@ -36,6 +37,8 @@ export default function Library({
   onCapture,
   onSource,
   dashboard,
+  onGraph,
+  onCategorize,
 }: {
   query: string;
   setQuery: (q: string) => void;
@@ -44,6 +47,8 @@ export default function Library({
   onCapture: () => void;
   onSource: (id: string) => void;
   dashboard: Dashboard | null;
+  onGraph: (id: string) => void;
+  onCategorize: (id: string) => void;
 }) {
   const [topic, setTopic] = useState('');
   const [kind, setKind] = useState('');
@@ -59,6 +64,12 @@ export default function Library({
   const [digest, setDigest] = useState<Digest | null>(null);
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState('');
+  const [selected, setSelected] = useState<LibrarySelection | null>(null);
+  const [readerOpen, setReaderOpen] = useState(false);
+  function choose(id: string, type: LibrarySelection['type']) {
+    setSelected({ id, type });
+    setReaderOpen(true);
+  }
   const request = {
     query,
     topic,
@@ -104,6 +115,23 @@ export default function Library({
         : Promise.resolve({ items: [], total: 0 }),
     [showSources, status, query, topic, project, sourceOffset, revision],
   );
+  const visibleKnowledge = status === 'imported' ? [] : data?.items || [];
+  const visibleSources = showSources ? sources.data?.items || [] : [];
+  const selectionKey = JSON.stringify([
+    visibleKnowledge.map((item) => item.id),
+    visibleSources.map((item) => item.id),
+  ]);
+  useEffect(() => {
+    if (loading || (showSources && sources.loading)) return;
+    const choices: LibrarySelection[] = [
+      ...visibleKnowledge.map((item) => ({ id: item.id, type: 'knowledge' as const })),
+      ...visibleSources.map((item) => ({ id: item.id, type: 'source' as const })),
+    ];
+    if (!choices.some((item) => item.id === selected?.id && item.type === selected?.type)) {
+      setSelected(choices[0] || null);
+      setReaderOpen(false);
+    }
+  }, [selectionKey, loading, sources.loading, selected?.id, selected?.type, showSources]);
   async function ask() {
     setAsking(true);
     setAskError('');
@@ -336,132 +364,162 @@ export default function Library({
           </span>
         )}
       </div>
-      {status !== 'imported' &&
-        (loading && !data ? (
-          <Loading />
-        ) : data?.items.length ? (
-          <div className="knowledge-list">
-            {data.items.map((k) => (
-              <KnowledgeCard key={k.id} item={k} onOpen={onOpen} />
-            ))}
-          </div>
-        ) : !showSources || (!sources.loading && !sources.data?.total) ? (
-          <Empty
-            title={query ? 'No accepted knowledge found' : 'A little knowledge goes a long way'}
-            description={
-              query
-                ? 'Try another phrase, include candidates, or import a source to start building this topic.'
-                : 'Capture something you learned, or bring in a source worth keeping.'
-            }
-            action={
-              <button className="button primary" onClick={onCapture}>
-                Capture knowledge
-                <Plus size={15} />
-              </button>
-            }
-          />
-        ) : null)}
-      {status !== 'imported' && data && data.total > 20 && (
-        <div className="pagination">
-          <button
-            className="button small"
-            disabled={!offset}
-            onClick={() => setOffset(Math.max(0, offset - 20))}
-          >
-            <ChevronLeft size={14} />
-            Previous
-          </button>
-          <span>
-            {offset + 1}–{Math.min(offset + 20, data.total)} of {data.total}
-          </span>
-          <button
-            className="button small"
-            disabled={offset + 20 >= data.total}
-            onClick={() => setOffset(offset + 20)}
-          >
-            Next
-            <ChevronRight size={14} />
-          </button>
-        </div>
-      )}
-      {showSources && (
-        <section className="library-imports">
-          <div className="section-title">
-            <h2>{status === 'imported' ? 'Your imported notes' : 'Imported notes & sources'}</h2>
-            <span className="section-caption">{sources.data?.total || 0} retained sources</span>
-          </div>
-          <p className="section-caption">
-            These originals are part of your collection. Imported content is available before any
-            claims are accepted or verified.
-          </p>
-          {sources.loading && !sources.data ? (
-            <Loading />
-          ) : sources.data?.items.length ? (
-            <div className="library-source-list">
-              {sources.data.items.map((source) => (
-                <button
-                  className="library-source-card"
-                  key={source.id}
-                  onClick={() => onSource(source.id)}
-                >
-                  <div className="library-source-heading">
-                    <FileText size={18} />
-                    <h3>{source.title}</h3>
-                    <ArrowRight size={15} />
-                  </div>
-                  <div className="knowledge-meta">
-                    <Badge>{source.origin === 'note_station' ? 'Imported note' : 'Source'}</Badge>
-                    <span>
-                      {source.metadata?.notebook || source.project || 'Retained original'}
-                    </span>
-                    <span>Original source · Unverified</span>
-                  </div>
-                  <p>{source.excerpt}</p>
-                  <div className="library-source-footer">
-                    <div>
-                      {source.tags.map((tag) => (
-                        <span className="tag" key={tag}>
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                    <span>{date(source.metadata?.modified_at || source.created_at)}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <Empty
-              title={query ? 'No imported notes or sources found' : 'No imported notes yet'}
-              description="Import your notebooks or save a source to add original material to your collection."
-            />
-          )}
-          {!!sources.data && sources.data.total > 20 && (
+      <div className={`library-browser ${readerOpen ? 'reader-open' : ''}`}>
+        <div className="library-results-pane" role="region" aria-label="Library results">
+          {status !== 'imported' &&
+            (loading && !data ? (
+              <Loading />
+            ) : data?.items.length ? (
+              <div className="knowledge-list">
+                {data.items.map((k) => (
+                  <KnowledgeCard
+                    key={k.id}
+                    item={k}
+                    selected={selected?.id === k.id}
+                    onOpen={(id) => choose(id, 'knowledge')}
+                  />
+                ))}
+              </div>
+            ) : !showSources || (!sources.loading && !sources.data?.total) ? (
+              <Empty
+                title={query ? 'No accepted knowledge found' : 'A little knowledge goes a long way'}
+                description={
+                  query
+                    ? 'Try another phrase, include candidates, or import a source to start building this topic.'
+                    : 'Capture something you learned, or bring in a source worth keeping.'
+                }
+                action={
+                  <button className="button primary" onClick={onCapture}>
+                    Capture knowledge
+                    <Plus size={15} />
+                  </button>
+                }
+              />
+            ) : null)}
+          {status !== 'imported' && data && data.total > 20 && (
             <div className="pagination">
               <button
                 className="button small"
-                disabled={!sourceOffset}
-                onClick={() => setSourceOffset((value) => Math.max(0, value - 20))}
+                disabled={!offset}
+                onClick={() => setOffset(Math.max(0, offset - 20))}
               >
                 <ChevronLeft size={14} />
-                Previous sources
+                Previous
               </button>
               <span>
-                {sourceOffset + 1}–{Math.min(sourceOffset + 20, sources.data.total)} of{' '}
-                {sources.data.total}
+                {offset + 1}–{Math.min(offset + 20, data.total)} of {data.total}
               </span>
               <button
                 className="button small"
-                disabled={sourceOffset + 20 >= sources.data.total}
-                onClick={() => setSourceOffset((value) => value + 20)}
+                disabled={offset + 20 >= data.total}
+                onClick={() => setOffset(offset + 20)}
               >
-                Next sources
+                Next
                 <ChevronRight size={14} />
               </button>
             </div>
           )}
-        </section>
-      )}
+          {showSources && (
+            <section className="library-imports">
+              <div className="section-title">
+                <h2>
+                  {status === 'imported' ? 'Your imported notes' : 'Imported notes & sources'}
+                </h2>
+                <span className="section-caption">{sources.data?.total || 0} retained sources</span>
+              </div>
+              <p className="section-caption">
+                These originals are part of your collection. Imported content is available before
+                any claims are accepted or verified.
+              </p>
+              {sources.loading && !sources.data ? (
+                <Loading />
+              ) : sources.data?.items.length ? (
+                <div className="library-source-list">
+                  {sources.data.items.map((source) => (
+                    <button
+                      className="library-source-card"
+                      key={source.id}
+                      aria-pressed={selected?.id === source.id}
+                      onClick={() => choose(source.id, 'source')}
+                    >
+                      <div className="library-source-heading">
+                        <FileText size={18} />
+                        <h3>{source.title}</h3>
+                        <ArrowRight size={15} />
+                      </div>
+                      <div className="knowledge-meta">
+                        <Badge>
+                          {source.origin === 'note_station' ? 'Imported note' : 'Source'}
+                        </Badge>
+                        <span>
+                          {source.metadata?.notebook || source.project || 'Retained original'}
+                        </span>
+                        <span>Original source · Unverified</span>
+                      </div>
+                      <p>{source.excerpt}</p>
+                      <div className="library-source-footer">
+                        <div>
+                          {source.tags.map((tag) => (
+                            <span className="tag" key={tag}>
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                        <span>{date(source.metadata?.modified_at || source.created_at)}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <Empty
+                  title={query ? 'No imported notes or sources found' : 'No imported notes yet'}
+                  description="Import your notebooks or save a source to add original material to your collection."
+                />
+              )}
+              {!!sources.data && sources.data.total > 20 && (
+                <div className="pagination">
+                  <button
+                    className="button small"
+                    disabled={!sourceOffset}
+                    onClick={() => setSourceOffset((value) => Math.max(0, value - 20))}
+                  >
+                    <ChevronLeft size={14} />
+                    Previous sources
+                  </button>
+                  <span>
+                    {sourceOffset + 1}–{Math.min(sourceOffset + 20, sources.data.total)} of{' '}
+                    {sources.data.total}
+                  </span>
+                  <button
+                    className="button small"
+                    disabled={sourceOffset + 20 >= sources.data.total}
+                    onClick={() => setSourceOffset((value) => value + 20)}
+                  >
+                    Next sources
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              )}
+            </section>
+          )}
+        </div>
+        <LibraryReader
+          selected={selected}
+          revision={revision}
+          onOpen={onOpen}
+          onSource={onSource}
+          onGraph={onGraph}
+          onCategorize={onCategorize}
+          onBack={() => {
+            setReaderOpen(false);
+            requestAnimationFrame(() =>
+              document
+                .querySelector<HTMLElement>('.library-results-pane [aria-pressed="true"]')
+                ?.focus(),
+            );
+          }}
+        />
+      </div>
       {!!data?.passages.length && (
         <section className="source-matches">
           <h2>

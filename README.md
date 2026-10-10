@@ -28,6 +28,8 @@ Open [the built app](http://127.0.0.1:4310). Stop with Ctrl+C. Only one API proc
 
 ## What works
 
+The web app uses an Apple-inspired interface with Liquid Glass navigation and globe controls, solid reading surfaces, and a library list beside an inline reader. Choose **System**, **Light**, or **Dark** in Settings → **Appearance**, or use the toolbar appearance button. Preferences are saved in this browser. **Reduce transparency** switches glass to solid surfaces; device preferences for reduced motion and reduced transparency are also respected. On mobile, selecting a library item opens the reader with a **Back to collection** action.
+
 - Capture observations, preferences, hypotheses, inferences, and factual claims with topics, project context, optional structured triples, validity dates, and review intervals.
 - Import pasted text, UTF-8 Markdown/text, HTML, text PDFs, and public web pages. Retain originals, exact passage anchors, hashes, and source revisions.
 - Import Synology Note Station NSX archives with notebook selection, original dates/tags, native note JSON, downloadable attachments, and optional claim extraction.
@@ -138,7 +140,127 @@ npm.cmd run test:e2e
 - Playwright builds the app and tests capture/edit/archive/forget, import/review/verify/citation, Note Station previews/notebook selection/attachment downloads/backups, graph/list/settings, and a mobile viewport. It uses installed Chrome on this Windows machine; on another host first run `npx playwright install chromium`.
 - Browser screenshots are written to `.data/screenshots/`; traces from failures stay in `test-results/`.
 
-## Spike architecture and limits
+## Architecture
+
+Commonplace is a local TypeScript application with one API process owning an embedded PostgreSQL database. The browser and MCP clients use the same application services, authorization rules, and stored records. The graph is stored as explicit nodes and typed relationships; vectors provide semantic retrieval and category suggestions alongside that graph.
+
+### Runtime and component boundaries
+
+```mermaid
+flowchart TB
+  Browser["Browser<br/>React 19 + TypeScript<br/>Library, review, Three.js globe"]
+  Client["MCP client<br/>Assistant or external app"]
+  Bridge["Optional stdio bridge<br/>server/stdio.ts"]
+
+  subgraph API["Local API process · 127.0.0.1:4310"]
+    REST["Express REST routes<br/>/api/*"]
+    MCP["MCP Streamable HTTP<br/>/mcp"]
+    Auth["Local session / bearer tokens<br/>Actor and scope checks"]
+    Service["BrainService + CategoryService<br/>Knowledge, evidence, graph, review"]
+    Worker["Background work loop<br/>Imports, indexing, categorization"]
+    Model["Transformers.js<br/>Local multilingual E5 inference"]
+    DB[("PGlite PostgreSQL + pgvector<br/>Records, graph, search index, jobs")]
+  end
+
+  Files["Local filesystem<br/>Original attachments, uploads,<br/>model cache, credentials"]
+  Ollama["Optional local Ollama<br/>Claim extraction"]
+
+  Browser -->|"Session cookie · REST"| REST
+  Client -->|"Bearer token · HTTP"| MCP
+  Client -->|stdio| Bridge
+  Bridge -->|"Bearer token · /api/tools/*"| REST
+  REST --> Auth
+  MCP --> Auth
+  Auth --> Service
+  Service --> DB
+  Service --> Files
+  Service -->|"Query and category embeddings"| Model
+  Worker --> Service
+  Worker --> Model
+  Model --> DB
+  Model --> Files
+  Service -.->|"Only with EXTRACTION=ollama"| Ollama
+```
+
+In development, Vite serves the browser app on port **5173** and proxies `/api` to the API. In a built installation, Express also serves `dist/`, so the UI and API share port **4310**. The stdio bridge forwards tool calls to the running API; it does not open another database connection or own another copy of the knowledge store.
+
+| Responsibility          | Implementation                                                                                                                                                                       | Boundary                                                                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| Browser workspace       | [`src/App.tsx`](src/App.tsx), [`src/LibraryReader.tsx`](src/LibraryReader.tsx), [`src/Appearance.tsx`](src/Appearance.tsx)                                                           | View navigation, inline reading, and browser-local appearance preferences; canonical knowledge remains on the server.             |
+| Graph presentation      | [`src/Graph.tsx`](src/Graph.tsx), [`src/globe-layout.ts`](src/globe-layout.ts), [`src/globe-scene.ts`](src/globe-scene.ts)                                                           | Renders a bounded graph response. Category clusters are a visual layout, not geographic positions or a calibrated similarity map. |
+| Transport and contracts | [`server/app.ts`](server/app.ts), [`server/mcp.ts`](server/mcp.ts), [`shared/contracts.ts`](shared/contracts.ts)                                                                     | REST and MCP adapters use shared Zod contracts and dispatch to application services.                                              |
+| Knowledge and quality   | [`server/service.ts`](server/service.ts), [`server/quality.ts`](server/quality.ts)                                                                                                   | Versioned writes, exact citations, lifecycle and review rules, temporal freshness, graph queries, and hybrid retrieval.           |
+| Organization            | [`server/category-service.ts`](server/category-service.ts), [`server/semantic-categories.ts`](server/semantic-categories.ts), [`server/categorization.ts`](server/categorization.ts) | Metadata and keyword fallback, queued semantic suggestions, rescans, and separately persisted owner corrections.                  |
+| Ingestion and storage   | [`server/ingestion.ts`](server/ingestion.ts), [`server/nsx.ts`](server/nsx.ts), [`server/backup.ts`](server/backup.ts)                                                               | Parsing, bounded NSX processing, retained originals and attachments, portable backup and restore.                                 |
+| Database and workers    | [`server/db.ts`](server/db.ts), [`server/schema.sql`](server/schema.sql), [`server/index.ts`](server/index.ts), [`server/embeddings.ts`](server/embeddings.ts)                       | Schema setup, durable job recovery, background processing, local model inference, and search-index rebuilding.                    |
+
+### Data model: evidence, graph, and search
+
+The following diagram shows the core persisted relationships. `knowledge`, `sources`, and named entities use IDs from `nodes`. Categories, topics, and projects are also graph nodes. The `relations` table links node IDs with types such as `categorized_as`, `category_parent`, `related_to`, and `contradicts`; there is no separate graph database.
+
+```mermaid
+erDiagram
+  nodes ||--o| knowledge : "may represent"
+  nodes ||--o| sources : "may represent"
+  nodes ||--o{ relations : "source endpoint"
+  nodes ||--o{ relations : "target endpoint"
+  sources ||--o{ revisions : "retains snapshots"
+  revisions ||--o{ passages : "contains anchored text"
+  revisions ||--o{ source_attachments : "retains media"
+  knowledge ||--o{ evidence : "has support or challenge"
+  passages ||--o{ evidence : "provides exact citation"
+  knowledge ||--o{ versions : "retains edit history"
+  knowledge ||--o{ reviews : "records owner decisions"
+  knowledge |o--o{ search_documents : "indexes knowledge"
+  passages |o--o{ search_documents : "indexes source text"
+```
+
+Evidence links a knowledge item to an exact passage in a retained source revision. Passage anchors and offsets preserve citation context. Acceptance, verification, evidence support, and freshness are separate: importing a source or accepting a candidate does not verify it. Freshness is calculated from verification, applicability dates, and review intervals when knowledge is read; expiry changes its reported quality rather than automatically deleting it.
+
+`search_documents` is a rebuildable index containing searchable text, a PostgreSQL full-text column, a 384-dimensional vector, the model namespace, and an input hash. Current-query retrieval combines lexical ranks and cosine-similarity ranks using reciprocal rank fusion, with optional expansion through explicit graph links. The server applies lifecycle, topic/project, and temporal filters; recorded-time searches use saved versions rather than current semantic vectors. Ask mode assembles a cited evidence digest from retrieved material.
+
+Category suggestions and processing state live in `categorizations`. Owner accept/dismiss decisions live independently in `category_decisions`, so a rescan can replace generated suggestions while preserving manual corrections. Suggestion confidence describes classification strength, not whether the note is true.
+
+### Import, indexing, and review flow
+
+```mermaid
+flowchart TD
+  Input["Text, document, public URL,<br/>or selected NSX notebooks"]
+  Job["Persist import job<br/>Return ID for progress and retry"]
+  Retain["Worker parses and commits sources,<br/>revisions, passages and metadata<br/>NSX: one transaction per note"]
+  Extract{"Claim extraction enabled?"}
+  Candidates["Propose cited knowledge candidates"]
+  Capture["Capture or edit knowledge<br/>through UI or MCP"]
+  Writes["Persist knowledge and graph links<br/>Apply metadata / keyword categories"]
+  Inference["Queue and run local E5 indexing<br/>and semantic categorization<br/>Shared serialized model queue"]
+  Results["Persist vectors and category suggestions<br/>Check input fingerprints before applying"]
+  Read["Search, library, graph and MCP<br/>Originals are readable before claim acceptance"]
+  Owner["Owner reviews candidates<br/>Acceptance and verification are separate actions"]
+  Corrections["Owner confirms, dismisses,<br/>or adds categories"]
+
+  Input --> Job --> Retain
+  Retain --> Extract
+  Extract -->|Yes| Candidates --> Writes
+  Extract -->|No| Inference
+  Capture --> Writes
+  Writes --> Inference
+  Inference --> Results --> Read
+  Retain --> Read
+  Writes --> Read
+  Candidates --> Owner
+  Owner -->|"Versioned review record"| Read
+  Read --> Corrections
+```
+
+The API process runs a background loop every second for import jobs, pending search documents, and pending categorizations. Jobs and category progress survive restarts; import retries reuse committed records. NSX commits one note at a time so a failed batch can resume without duplicating completed notes. Inference runs outside database transactions and uses input hashes/fingerprints to avoid applying results to concurrently changed content. Keyword search and provisional metadata/keyword categories remain available while the local model loads, fails, or is disabled.
+
+### Persistence and access
+
+Under the configured `DATA_DIR`, `postgres/` holds the persistent PGlite database, `files/` holds disk-backed uploads and content-addressed attachments, `models/` caches downloaded model weights, and `credentials.json` holds local credentials. Appearance preferences stay in browser `localStorage`. Portable ZIP backups contain a database-record manifest and attachments; restore targets an empty workspace and rebuilds derived indexes. One API process must own a given data directory.
+
+The browser obtains an HttpOnly, SameSite session cookie for the local owner. MCP uses separate read-only and read/contribute bearer tokens. Scope checks are enforced in application services as well as relevant routes: ordinary assistant tokens can propose knowledge but cannot verify claims, override owner category decisions, or physically delete data. Local Host/Origin guards restrict access to the loopback deployment; this is not a multi-user or remote authentication design.
+
+## Spike limits
 
 React/TypeScript/Vite + Three.js, an Express/TypeScript backend, filesystem-persistent PGlite PostgreSQL with pgvector, Transformers.js local E5 embeddings, and the official TypeScript MCP SDK. This implements the concept's knowledge architecture using the runtime available in the workspace. [PGlite persistence](https://pglite.dev/docs/), [pgvector extension](https://pglite.dev/extensions/), [MCP SDK](https://github.com/modelcontextprotocol/typescript-sdk).
 

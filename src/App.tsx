@@ -17,10 +17,12 @@ import {
   Lightbulb,
   GitBranch,
   FileText,
-  Leaf,
   Check,
   X,
+  Moon,
+  Sun,
 } from 'lucide-react';
+import { useAppearance } from './Appearance';
 import { api, date } from './api';
 import { useResource } from './hooks';
 import { SectionHeading, KnowledgeCard, Loading, Empty, LinkAction } from './components';
@@ -62,6 +64,7 @@ function Logo() {
   );
 }
 export default function App() {
+  const appearance = useAppearance();
   const initial = new URLSearchParams(window.location.search).get('view') as View;
   const [view, setView] = useState<View>(
     ['overview', 'library', 'graph', 'sources', 'review', 'settings'].includes(initial)
@@ -126,6 +129,7 @@ export default function App() {
         !capture &&
         !detail &&
         !source &&
+        !categoryItem &&
         !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)
       ) {
         e.preventDefault();
@@ -134,7 +138,7 @@ export default function App() {
     };
     window.addEventListener('keydown', listener);
     return () => window.removeEventListener('keydown', listener);
-  }, [capture, detail, source]);
+  }, [capture, detail, source, categoryItem]);
   useEffect(() => {
     const listener = () => {
       const next = new URLSearchParams(window.location.search).get('view') as View;
@@ -176,7 +180,14 @@ export default function App() {
   const d = dashboard.data;
   return (
     <div className="app-shell">
-      <aside className={`sidebar ${mobile ? 'mobile-open' : ''}`}>
+      {mobile && (
+        <button
+          className="navigation-scrim"
+          aria-label="Close navigation"
+          onClick={() => setMobile(false)}
+        />
+      )}
+      <aside className={`sidebar glass-surface ${mobile ? 'mobile-open' : ''}`}>
         <a
           href="?view=overview"
           className="brand"
@@ -188,9 +199,7 @@ export default function App() {
           <span className="brand-mark">
             <Logo />
           </span>
-          <span>
-            commonplace<span className="brand-period">.</span>
-          </span>
+          <span>Commonplace</span>
         </a>
         <div className="workspace-label">
           <span className="workspace-avatar">M</span>
@@ -210,30 +219,29 @@ export default function App() {
             <button
               key={n.id}
               className={`nav-item ${view === n.id ? 'active' : ''}`}
+              aria-label={n.label}
+              aria-current={view === n.id ? 'page' : undefined}
               onClick={() => {
                 if (n.id === 'graph') setFocus(undefined);
                 navigate(n.id);
               }}
             >
               <n.icon size={18} />
-              <span>{n.label}</span>
+              <span>
+                {n.id === 'library'
+                  ? 'Library'
+                  : n.id === 'graph'
+                    ? 'Graph'
+                    : n.id === 'review'
+                      ? 'Review'
+                      : n.label}
+              </span>
               {n.id === 'review' && !!d?.candidates && (
                 <span className="nav-count">{d.candidates}</span>
               )}
             </button>
           ))}
         </nav>
-        <div className="sidebar-note">
-          <div className="sidebar-note-icon">
-            <Leaf size={17} />
-          </div>
-          <strong>A little more connected.</strong>
-          <p>Every idea you keep is a thread you can pick up later.</p>
-          <div className="sidebar-note-footer">
-            <span>{d?.active || 0} pieces of knowledge</span>
-            <GitBranch size={14} />
-          </div>
-        </div>
         <div className="sidebar-bottom">
           <button
             className={`nav-item ${view === 'settings' ? 'active' : ''}`}
@@ -255,15 +263,16 @@ export default function App() {
         </div>
       </aside>
       <div className="main-shell">
-        <header className="topbar">
+        <header className="topbar glass-surface">
+          <button
+            className="mobile-menu icon-button"
+            aria-label="Toggle navigation"
+            aria-expanded={mobile}
+            onClick={() => setMobile(!mobile)}
+          >
+            <PanelLeft size={19} />
+          </button>
           <div className="topbar-location">
-            <button
-              className="mobile-menu icon-button"
-              aria-label="Toggle navigation"
-              onClick={() => setMobile(!mobile)}
-            >
-              <PanelLeft size={19} />
-            </button>
             <span>Workspace</span>
             <span className="breadcrumb-slash">/</span>
             <strong>
@@ -284,11 +293,26 @@ export default function App() {
             </kbd>
           </form>
           <button
-            className="topbar-avatar"
-            aria-label="Open workspace settings"
-            onClick={() => navigate('settings')}
+            className="appearance-toggle icon-button"
+            aria-label={
+              appearance.resolved === 'dark'
+                ? 'Switch to light appearance'
+                : 'Switch to dark appearance'
+            }
+            title={`Appearance: ${appearance.appearance}`}
+            onClick={() =>
+              appearance.setAppearance(appearance.resolved === 'dark' ? 'light' : 'dark')
+            }
           >
-            M
+            {appearance.resolved === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
+          </button>
+          <button
+            className="button primary toolbar-capture"
+            aria-label="New note"
+            onClick={() => setCapture('note')}
+          >
+            <Plus size={16} />
+            <span>New note</span>
           </button>
         </header>
         <main className={`main-content ${view === 'overview' ? 'overview' : ''}`}>
@@ -311,23 +335,13 @@ export default function App() {
               {view === 'overview' && (
                 <>
                   <div className="overview-greeting">
-                    <span className="eyebrow">
-                      <i /> ROOM TO THINK
-                    </span>
+                    <span className="eyebrow">Your workspace</span>
                     <span>{date(new Date().toISOString())}</span>
                   </div>
                   <div className="overview-hero">
                     <div>
-                      <h1>
-                        A place for everything
-                        <br />
-                        you're <em>learning.</em>
-                      </h1>
-                      <p>
-                        Keep the ideas that matter. Find the connections.
-                        <br />
-                        Build on what you know.
-                      </p>
+                      <h1>Your knowledge, connected.</h1>
+                      <p>Your notes, evidence, and ideas. Ready when you need them.</p>
                       <button className="button primary" onClick={() => setCapture('note')}>
                         <Plus size={16} />
                         Capture an idea
@@ -336,16 +350,6 @@ export default function App() {
                         Import a source
                         <ArrowUpRight size={15} />
                       </button>
-                    </div>
-                    <div className="hero-aside">
-                      <div className="hero-flower">
-                        <Logo />
-                      </div>
-                      <p>
-                        Collected with intention.
-                        <br />
-                        Connected over time.
-                      </p>
                     </div>
                   </div>
                   <div className="stats-grid">
@@ -392,7 +396,7 @@ export default function App() {
                   <div className="overview-columns">
                     <section className="recent-section">
                       <div className="section-title">
-                        <h2>Recently connected</h2>
+                        <h2>Recently added</h2>
                         <LinkAction onClick={() => navigate('library')}>View library</LinkAction>
                       </div>
                       <p className="section-caption">Ideas you've kept, ready to build on.</p>
@@ -425,9 +429,8 @@ export default function App() {
                     <div className="overview-right">
                       <section className="graph-preview globe-preview">
                         <div className="graph-preview-heading">
-                          <div className="eyebrow">YOUR KNOWLEDGE, CONNECTED</div>
-                          <h2>See the bigger picture.</h2>
-                          <p>Follow a thread. Discover what fits together.</p>
+                          <h2>A world of connections.</h2>
+                          <p>Explore notes, categories, and evidence.</p>
                         </div>
                         {graph.data && <Graph data={graph.data} compact onSelect={openNode} />}
                         <button className="graph-preview-link" onClick={() => openGraph()}>
@@ -510,6 +513,8 @@ export default function App() {
                   onCapture={() => setCapture('note')}
                   onSource={setSource}
                   dashboard={d}
+                  onGraph={openGraph}
+                  onCategorize={setCategoryItem}
                 />
               )}
               {view === 'graph' && (
@@ -689,7 +694,7 @@ function GraphView({
     <>
       <SectionHeading
         eyebrow="FOLLOW A THREAD"
-        title="The shape of what you know."
+        title="Knowledge graph"
         description="Ideas, evidence, and context. A graph that grows with you."
       />
       <div className="category-status">
@@ -789,18 +794,22 @@ function GraphView({
       </div>
       <div className="graph-explanation">
         <GitBranch size={18} />
-        <p>
-          Connections say <strong>why</strong> two things belong together. The globe is a logical
-          space: related items cluster around category hubs. Dotted rings await review; amber lights
-          need a fresh check. Select a node to explore its connections and evidence. Imported
-          originals appear as source nodes; review is required to turn extracted claims into
-          accepted knowledge. Large collections show a bounded selection—filter by notebook or open
-          a source's connections to explore further. Categories form broader/narrower branches.
-          Local semantic suggestions use note content, tags and notebook context. Confidence is a
-          model estimate; ambiguous suggestions need your review. Open Organize categories on a note
-          to confirm, dismiss or add categories. Your corrections survive future rescans.
-          Hierarchical tags and original stack/notebook metadata supply explicit branches.
-        </p>
+        <details>
+          <summary>How to read your graph</summary>
+          <p>
+            Connections say <strong>why</strong> two things belong together. The globe is a logical
+            space: related items cluster around category hubs. Dotted rings await review; amber
+            lights need a fresh check. Select a node to explore its connections and evidence.
+            Imported originals appear as source nodes; review is required to turn extracted claims
+            into accepted knowledge. Large collections show a bounded selection—filter by notebook
+            or open a source's connections to explore further. Categories form broader/narrower
+            branches. Local semantic suggestions use note content, tags and notebook context.
+            Confidence is a model estimate; ambiguous suggestions need your review. Open Organize
+            categories on a note to confirm, dismiss or add categories. Your corrections survive
+            future rescans. Hierarchical tags and original stack/notebook metadata supply explicit
+            branches.
+          </p>
+        </details>
       </div>
     </>
   );

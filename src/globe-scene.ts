@@ -4,13 +4,13 @@ import type { GraphNode, GraphResult } from '../shared/contracts';
 import { globeArc, globePositions } from './globe-layout';
 
 export const globeColors: Record<GraphNode['type'], string> = {
-  claim: '#82e6bd',
-  note: '#efb782',
-  entity: '#8dc9ec',
-  topic: '#c6b0f0',
-  project: '#f0d28c',
-  source: '#aed0c6',
-  category: '#f4cf79',
+  claim: '#6ddbb6',
+  note: '#aac7ff',
+  entity: '#8fc7f4',
+  topic: '#be9ef1',
+  project: '#e7b783',
+  source: '#a4bccb',
+  category: '#859eff',
 };
 
 export interface GlobeScene {
@@ -76,19 +76,19 @@ export function createGlobeScene(
   let dirty = true;
 
   // The sphere represents a logical knowledge space, with no geographic mapping.
-  scene.add(new THREE.AmbientLight(0xa6dfca, 1.6));
-  const light = new THREE.DirectionalLight(0xd8ffee, 3.2);
+  scene.add(new THREE.AmbientLight(0xb6caff, 1.6));
+  const light = new THREE.DirectionalLight(0xd8e8ff, 3.2);
   light.position.set(-3, 4, 5);
   scene.add(light);
   const sphere = new THREE.Mesh(
     new THREE.SphereGeometry(1.56, 64, 48),
-    new THREE.MeshPhongMaterial({ color: 0x0d302c, shininess: 28, specular: 0x164b45 }),
+    new THREE.MeshPhongMaterial({ color: 0x14223c, shininess: 38, specular: 0x324b75 }),
   );
   scene.add(sphere);
   const atmosphere = new THREE.Mesh(
     new THREE.SphereGeometry(1.68, 48, 32),
     new THREE.ShaderMaterial({
-      uniforms: { tint: { value: new THREE.Color('#68e8bd') } },
+      uniforms: { tint: { value: new THREE.Color('#89aaff') } },
       vertexShader:
         'varying vec3 normalView; varying vec3 positionView; void main(){ vec4 p = modelViewMatrix * vec4(position,1.0); normalView=normalize(normalMatrix*normal); positionView=p.xyz; gl_Position=projectionMatrix*p; }',
       fragmentShader:
@@ -100,7 +100,7 @@ export function createGlobeScene(
   );
   scene.add(atmosphere);
   const gridMaterial = new THREE.LineBasicMaterial({
-    color: 0x447d70,
+    color: 0x62779d,
     transparent: true,
     opacity: 0.3,
   });
@@ -259,10 +259,10 @@ export function createGlobeScene(
       new THREE.LineBasicMaterial({
         color:
           edge.type === 'category_parent'
-            ? 0xf4cf79
+            ? 0x859eff
             : edge.type === 'categorized_as'
-              ? 0xc3b08a
-              : 0x7bbda7,
+              ? 0x9aace3
+              : 0x85b6da,
         transparent: true,
         opacity: 0.36,
         depthWrite: false,
@@ -271,7 +271,7 @@ export function createGlobeScene(
     scene.add(line);
     const bead = new THREE.Mesh(
       nodeGeometry,
-      new THREE.MeshBasicMaterial({ color: 0xd8ffe8, transparent: true, opacity: 0.92 }),
+      new THREE.MeshBasicMaterial({ color: 0xd8e8ff, transparent: true, opacity: 0.92 }),
     );
     bead.scale.setScalar(0.016);
     bead.position.copy(points[0]);

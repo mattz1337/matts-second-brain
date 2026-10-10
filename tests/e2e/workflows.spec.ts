@@ -3,6 +3,92 @@ import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { nsxFixture, media } from '../fixtures/nsx.js';
 
+test('appearance preferences persist and the library reader works on desktop and mobile', async ({
+  page,
+}) => {
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Your knowledge, connected.' })).toBeVisible();
+  const marker = `GlassReader-${Date.now()}`;
+  for (const suffix of ['First', 'Second']) {
+    const response = await page.request.post('/api/knowledge', {
+      headers: { Origin: 'http://127.0.0.1:4311' },
+      data: {
+        title: `${marker} ${suffix}`,
+        statement: `${suffix} reading sample with retained context.`,
+        idempotency_key: crypto.randomUUID(),
+      },
+    });
+    expect(response.ok()).toBe(true);
+  }
+  await page.goto('/?view=library');
+  const root = page.locator('html');
+  const reader = page.getByRole('region', { name: 'Selected library item' });
+  const results = page.getByRole('region', { name: 'Library results' });
+  await page.getByLabel('Search library', { exact: true }).fill(marker);
+  await results.getByRole('button', { name: new RegExp(`${marker} First`) }).click();
+  await expect(reader.getByRole('heading', { name: `${marker} First`, exact: true })).toBeVisible();
+  await expect(reader.locator('.reader-text')).toHaveText(
+    'First reading sample with retained context.',
+  );
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await results.getByRole('button', { name: new RegExp(`${marker} Second`) }).click();
+  await expect(
+    reader.getByRole('heading', { name: `${marker} Second`, exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: path.resolve('.data/screenshots/library-glass-desktop.png'),
+    fullPage: true,
+  });
+  await page.getByLabel('Switch to dark appearance').click();
+  await expect(root).toHaveAttribute('data-theme', 'dark');
+  await page.reload();
+  await expect(root).toHaveAttribute('data-theme', 'dark');
+  await expect(reader.getByRole('heading', { level: 2 }).first()).toBeVisible();
+  await page.screenshot({
+    path: path.resolve('.data/screenshots/library-glass-dark.png'),
+    fullPage: true,
+  });
+  await page.getByRole('button', { name: 'Connections & settings', exact: true }).click();
+  await page.getByLabel('Reduce transparency', { exact: true }).check();
+  await expect(root).toHaveAttribute('data-transparency', 'reduced');
+  expect(
+    await page.locator('.sidebar').evaluate((element) => getComputedStyle(element).backdropFilter),
+  ).toBe('none');
+  await page.reload();
+  await expect(root).toHaveAttribute('data-transparency', 'reduced');
+  await page.getByRole('button', { name: 'Connections & settings', exact: true }).click();
+  await expect(page.getByLabel('Reduce transparency', { exact: true })).toBeChecked();
+  await page.getByLabel('Reduce transparency', { exact: true }).uncheck();
+  await page.getByRole('button', { name: 'System', exact: true }).click();
+  await expect(root).toHaveAttribute('data-theme', 'light');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(root).toHaveAttribute('data-theme', 'dark');
+  await page.screenshot({
+    path: path.resolve('.data/screenshots/settings-glass-dark.png'),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByLabel('Toggle navigation').click();
+  await page.getByRole('button', { name: 'Knowledge library', exact: true }).click();
+  await page.getByLabel('Search library', { exact: true }).fill(marker);
+  await expect(results).toBeVisible();
+  await expect(reader).not.toBeVisible();
+  await results.getByRole('button', { name: new RegExp(`${marker} First`) }).click();
+  await expect(reader.getByRole('heading', { name: `${marker} First`, exact: true })).toBeVisible();
+  await expect(results).not.toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({
+    path: path.resolve('.data/screenshots/library-glass-mobile.png'),
+    fullPage: true,
+  });
+  await page.getByRole('button', { name: 'Back to collection', exact: true }).click();
+  await expect(results.getByRole('button', { name: new RegExp(`${marker} First`) })).toBeFocused();
+  await page.getByLabel('Toggle navigation').click();
+  await page.getByLabel('Close navigation', { exact: true }).click();
+  await expect(page.getByLabel('Toggle navigation')).toHaveAttribute('aria-expanded', 'false');
+});
+
 test('owner category confirmations and dismissals survive a rescan and appear in the graph', async ({
   page,
 }) => {
@@ -135,16 +221,14 @@ test('overview, graph exploration, settings, and responsive layout', async ({ pa
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto('/');
-  await expect(
-    page.getByRole('heading', { name: "A place for everything you're learning." }),
-  ).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Your knowledge, connected.' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Accepted knowledge/ })).toBeVisible();
   await page.screenshot({
     path: path.resolve('.data/screenshots/overview-desktop.png'),
     fullPage: true,
   });
   await page.getByRole('button', { name: 'Explore your graph' }).click();
-  await expect(page.getByRole('heading', { name: 'The shape of what you know.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Knowledge graph', exact: true })).toBeVisible();
   await expect(page.getByRole('img', { name: 'Interactive knowledge graph' })).toBeVisible();
   const stage = page.locator('.full-graph .globe-stage');
   await expect(stage).toHaveAttribute('data-ready', 'true');
@@ -209,9 +293,7 @@ test('overview, graph exploration, settings, and responsive layout', async ({ pa
   await expect(page.getByText('search_knowledge', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Overview', exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(
-    page.getByRole('heading', { name: "A place for everything you're learning." }),
-  ).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Your knowledge, connected.' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
@@ -350,6 +432,7 @@ test('capture, search, inspect, edit, archive, restore, and forget a note', asyn
     .fill('WorkshopStarlight');
   await page.getByRole('button', { name: new RegExp(marker) }).click();
   const dialog = page.getByRole('dialog', { name: 'Knowledge detail' });
+  await page.getByRole('button', { name: 'Open full detail', exact: true }).click();
   await expect(dialog.getByRole('heading', { name: marker, exact: true })).toBeVisible();
   await expect(dialog.getByText('Self Reported', { exact: true })).toBeVisible();
   await dialog.getByRole('button', { name: 'Edit', exact: true }).click();
@@ -357,11 +440,11 @@ test('capture, search, inspect, edit, archive, restore, and forget a note', asyn
     .getByLabel('Your knowledge', { exact: true })
     .fill('WorkshopStarlight is my revised observation after checking the material.');
   await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-  await expect(page.getByText('Version 2', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Version 2', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Archive', exact: true }).click();
-  await expect(page.getByText('Archived', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Archived', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Restore knowledge', exact: true }).click();
-  await expect(page.getByText('Active', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Active', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Forget this item', exact: true }).click();
   await page.getByRole('button', { name: 'Permanently delete', exact: true }).click();
   await expect(dialog).not.toBeVisible();

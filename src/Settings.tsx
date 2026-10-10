@@ -10,7 +10,9 @@ import {
   EyeOff,
   RefreshCw,
   FileUp,
+  Palette,
 } from 'lucide-react';
+import { useAppearance, type Appearance } from './Appearance';
 import { api, pretty } from './api';
 import { useResource } from './hooks';
 import { SectionHeading, Badge, Loading } from './components';
@@ -24,6 +26,7 @@ interface Integrations {
   profile: string;
 }
 export default function Settings({ onChanged }: { onChanged: () => void }) {
+  const appearance = useAppearance();
   const integrations = useResource(() => api<Integrations>('/integrations'), []);
   const models = useResource(() => api<ModelStatus>('/models'), [], 5000);
   const [show, setShow] = useState(false);
@@ -79,6 +82,41 @@ export default function Settings({ onChanged }: { onChanged: () => void }) {
         title="Connections & settings"
         description="Use your knowledge from other tools. Keep your data in your hands."
       />
+      <section className="settings-card appearance-settings">
+        <div className="settings-card-heading">
+          <div className="settings-icon">
+            <Palette size={22} />
+          </div>
+          <div>
+            <h2>Appearance</h2>
+            <p>A comfortable workspace, in any light.</p>
+          </div>
+        </div>
+        <div className="segmented" role="group" aria-label="Color appearance">
+          {(['system', 'light', 'dark'] as Appearance[]).map((value) => (
+            <button
+              key={value}
+              className={appearance.appearance === value ? 'selected' : ''}
+              aria-pressed={appearance.appearance === value}
+              onClick={() => appearance.setAppearance(value)}
+            >
+              {value[0].toUpperCase() + value.slice(1)}
+            </button>
+          ))}
+        </div>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={appearance.reduceTransparency}
+            onChange={(event) => appearance.setReduceTransparency(event.target.checked)}
+          />
+          Reduce transparency
+        </label>
+        <p className="section-caption">
+          Uses solid surfaces in place of glass. Motion follows your device’s accessibility
+          preferences.
+        </p>
+      </section>
       {error && (
         <div className="inline-error" role="alert">
           {error}
