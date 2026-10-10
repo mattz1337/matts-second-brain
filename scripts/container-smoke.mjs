@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomBytes, scrypt } from 'node:crypto';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createServer, request as forward } from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -17,6 +17,7 @@ const image =
 const suffix = randomBytes(6).toString('hex');
 const container = `orbit-check-${suffix}`,
   volume = `${container}-data`;
+await mkdir(path.resolve('.data'), { recursive: true });
 const directory = await mkdtemp(path.resolve('.data/container-check-'));
 const password = randomBytes(32).toString('hex'),
   salt = randomBytes(16);
