@@ -59,7 +59,10 @@ if (args[0] === 'compose') {
   else if (args.includes('up')) { state.created = true; output('Created replacement'); }
   else if (args.includes('start')) { state.newRunning = true; output('Started replacement'); }
   else die('Unexpected compose arguments: ' + event);
-} else if (args[0] === 'ps') output(state.scenario === 'shared' ? '${oldId}\\n${otherId}' : '${oldId}');
+} else if (args[0] === 'ps') {
+  const ids = state.scenario === 'shared' ? ['${oldId}', '${otherId}'] : ['${oldId}'];
+  output(ids.map(id => args.includes('--no-trunc') ? id : id.slice(0, 12)).join('\\n'));
+}
 else if (args[0] === 'pull') { if (state.scenario === 'pull') die('Registry unavailable'); output('Pulled'); }
 else if (args[0] === 'start') { state.oldRunning = true; output(args.at(-1)); }
 else if (args[0] === 'stop') { state.newRunning = false; output(args.at(-1)); }

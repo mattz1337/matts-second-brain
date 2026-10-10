@@ -73,7 +73,7 @@ mount_source() {
 data_path=$(cd "$(mount_source "$old_container" /data)" && pwd -P)
 password_file=$(mount_source "$old_container" /run/secrets/owner-password.json)
 [ -f "$password_file" ] || fail 'The mounted owner password hash file is missing.'
-for running in $(docker ps -q); do
+for running in $(docker ps --no-trunc -q); do
   if [ "$running" != "$old_container" ] && [ "$(mount_source "$running" /data)" = "$data_path" ]; then
     fail 'Another running container shares the Orbit data folder. Stop that instance first.'
   fi
