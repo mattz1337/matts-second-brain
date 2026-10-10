@@ -13,3 +13,6 @@ test-results/
 orbit-*.tar
 .tmp-orbit-*.tar*
 commonplace-*.tar
+.orbit-backups/
+.orbit-update.lock/
+.env.update.*

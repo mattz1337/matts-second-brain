@@ -28,7 +28,7 @@ Open [the built app](http://127.0.0.1:4310). Stop with Ctrl+C. Only one API proc
 
 ## What works
 
-For a password-protected installation on a DS423+ with Container Manager, see the [Synology deployment guide](docs/synology.md). It covers the amd64 image, persistent storage, HTTPS reverse proxy, owner login, migration, and database inspection.
+For a password-protected installation on a DS423+ with Container Manager, see the [Synology deployment guide](docs/synology.md). GitHub Actions verifies and publishes `linux/amd64` images to `ghcr.io/mattz1337/orbit`; releases get version tags and successful main builds get `edge`/commit tags. The NAS pulls a chosen release and uses the [manual updater](deploy/update-nas.sh) for a stopped-data backup, digest pinning, mount checks, and health validation. No image TAR transfer is needed. The guide covers first-time package visibility, persistent storage, HTTPS reverse proxy, owner login, migration, and database inspection.
 
 To inspect PGlite, use **Settings → Export backup** while running, or stop the API and run `npm.cmd run db:inspect -- --stopped`. SQL inspection queries a separate copy of the database; see [database inspection instructions](docs/synology.md#database-inspection) for custom queries and NAS commands. PGlite has no PostgreSQL TCP endpoint in this application.
 

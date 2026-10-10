@@ -34,7 +34,9 @@ await writeFile(
     salt: salt.toString('base64url'),
     key: key.toString('base64url'),
   }),
-  { mode: 0o600 },
+  // Synthetic hash only: Linux runner UID can differ from the container UID.
+  // The enclosing temporary directory remains private.
+  { mode: 0o644 },
 );
 const origin = 'https://brain.container.test';
 let base, cookie, reader;

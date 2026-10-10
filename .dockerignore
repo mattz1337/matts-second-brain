@@ -13,4 +13,6 @@ playwright-report
 orbit-*.tar
 .tmp-orbit-*.tar*
 commonplace-*.tar
+.orbit-backups
+.orbit-update.lock
 *.log

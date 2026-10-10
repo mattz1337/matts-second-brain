@@ -14,7 +14,12 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:4311',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    launchOptions: existsSync(chrome) ? { executablePath: chrome } : {},
+    launchOptions: {
+      ...(existsSync(chrome) ? { executablePath: chrome } : {}),
+      ...(process.env.CI
+        ? { args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] }
+        : {}),
+    },
   },
   projects: [
     {

@@ -1,6 +1,7 @@
 services:
   orbit:
-    image: orbit:${IMAGE_TAG:-nas-spike}
+    # Pin a release or digest. The update script records the pulled digest in .env.
+    image: '${ORBIT_IMAGE:-ghcr.io/mattz1337/orbit:0.2.0}'
     platform: linux/amd64
     init: true
     restart: unless-stopped

@@ -16,19 +16,23 @@ The container listens on `0.0.0.0` internally; its published host port is bound 
 
 `APP_ORIGIN` must be the exact HTTPS origin used by browsers, without an application path. Host and Origin checks remain enabled. HTTPS is also required by the UI's UUID and clipboard APIs. Use a certificate trusted by the devices accessing the app. A DSM reverse-proxy rule does not itself authenticate users; Orbit supplies the password login.
 
-## 1. Prepare the image and owner password on your computer
+## 1. Use a published image and prepare the owner password
 
-From this checkout, using Docker Desktop in Linux-container mode:
+The [publishing workflow](../.github/workflows/container.yml) tests the backend, browser flows, and NAS updater, builds a `linux/amd64` image, then runs the actual container checks before publishing to `ghcr.io/mattz1337/orbit`. No Docker Hub account or custom publishing token is needed; GitHub Actions uses its scoped `GITHUB_TOKEN`. Pull requests run verification without publishing.
+
+Successful `main` pushes publish `edge` and `sha-<full-commit-hash>`. Publishing a GitHub release such as `v0.2.0` publishes `0.2.0`; its version must match `package.json`. The NAS updater resolves and stores the image digest for the actual installation. `edge` is for development. The workflow never connects to your NAS.
+
+After the first publication, open [the Orbit package](https://github.com/users/mattz1337/packages/container/package/orbit) → **Package settings → Change visibility → Public**. This is a one-time GitHub setting: public source repositories do not make new container packages public automatically. Public NAS pulls need no registry login. For a private package, authenticate the NAS with a classic token limited to `read:packages`; never put it in Compose or Git.
+
+Generate the owner password hash on your computer:
 
 ```powershell
 npm.cmd run auth:password
-docker build --platform linux/amd64 -t orbit:nas-spike .
-docker save -o orbit-nas-spike.tar orbit:nas-spike
 ```
 
 The password command asks for a password and confirmation without echoing either, then creates `.secrets/owner-password.json`. Use at least 12 characters. It stores a salted scrypt hash, not the password. An existing output file is never overwritten; for a password change, generate a new file using `npm.cmd run auth:password -- .secrets/owner-password-new.json`.
 
-Transfer the image TAR, `compose.synology.yml`, `deploy/synology.env.example`, and the hash file to the NAS. No source checkout or Node installation is needed on the NAS. TAR image bundles contain application code and dependencies; Docker's build context excludes `.data`, `.env*`, `.secrets`, and NSX exports. Do not put your backup into the image. A registry can replace the TAR workflow later by changing the Compose `image` value to a published, versioned image.
+Transfer `compose.synology.yml`, `deploy/synology.env.example`, `deploy/update-nas.sh`, and the hash file to the NAS once. No source checkout, Node installation, local Docker build, or image TAR is needed. The build context excludes private data, secrets, NSX exports, and update backups. Set `ORBIT_IMAGE=ghcr.io/mattz1337/orbit:0.2.0` in the NAS `.env`, or choose another published release. Keep deployment credentials and data on the NAS.
 
 ## 2. Prepare NAS folders and permissions
 
@@ -38,6 +42,7 @@ Create a project folder, for example:
 /volume1/docker/orbit/
   compose.synology.yml
   .env
+  update-nas.sh
   data/
   secrets/
     owner-password.json
@@ -66,9 +71,9 @@ Leave `TRUST_PROXY` empty initially. This ignores forwarded client IP headers; l
 
 ## 4. Start the Container Manager project
 
-1. In **Container Manager → Image**, import `orbit-nas-spike.tar` from the NAS.
-2. In **Project**, create a project using the prepared folder and `compose.synology.yml`.
-3. Start the project and check logs and container health.
+1. In **Container Manager → Project**, create a project using the prepared folder and `compose.synology.yml`.
+2. Start the project; Compose pulls the configured GHCR image. Internet access is needed for downloads; inbound router ports are not needed.
+3. Check logs and container health.
 4. Open the configured HTTPS URL and sign in with the owner password.
 
 Compose requires an `APP_ORIGIN` value. The server also refuses network mode without a valid password hash and HTTPS origin. Do not switch `ACCESS_MODE` to `local` in the container. The default desktop `npm run dev` continues to use loopback-only local mode.
@@ -86,6 +91,40 @@ An initial model download needs outbound internet access. Cached weights remain 
 Use the portable application backup to move between Windows and Linux instead of copying a running physical database. The password hash and MCP credentials are deployment secrets, not part of the portable knowledge backup. New NAS storage generates new MCP tokens; configure clients using the NAS Settings endpoint and tokens. Existing clients may continue to use the desktop instance until you intentionally switch them, but changes made in both instances will not synchronize.
 
 ## Maintenance and validation
+
+```mermaid
+flowchart LR
+  Git["GitHub main push / release"] --> Verify["Backend + browser + updater tests"]
+  Verify --> Build["Build linux/amd64<br/>Check actual container"]
+  Build --> Registry["GHCR: edge / commit / release tags"]
+  Registry --> Pull["Manual NAS update: pull + resolve digest"]
+  Pull --> Backup["Clean stop + private data backup"]
+  Backup --> Start["Validate mounts + start + health check"]
+```
+
+### Install an update manually
+
+For an existing TAR-based deployment, first copy the registry-enabled `compose.synology.yml` and `update-nas.sh` into its existing project folder. Keep the same project, data folder, password mount, and `.env` values. The updater can replace the existing local image without moving your collection.
+
+Once a release has finished publishing, run over NAS SSH:
+
+```sh
+sudo sh /volume1/docker/orbit/update-nas.sh 0.2.0 /volume1/docker/orbit
+```
+
+Alternatively, create a DSM **Task Scheduler → Scheduled Task → User-defined script**, using an account with Docker access and read/write access to the project, data, and backups. Enter the same command without `sudo` if the task runs as root. Leave scheduling disabled and use **Run** to trigger the chosen version manually. Change the version argument for each intentional update.
+
+The updater supports `docker compose` and `docker-compose`, locks concurrent updates, rejects floating installation tags, downloads before stopping, checks `linux/amd64`, and resolves the image digest. An already installed image is a no-op. It requires one running Orbit container, its data bind mount, and the registry-enabled Compose configuration.
+
+It retains the previous image as `orbit-rollback:<timestamp>`, stops Orbit with the 150-second allowance, checks clean exit, and creates `.orbit-backups/<timestamp>/data.tar.gz` from the stopped data. This **full physical backup includes the database, attachments, MCP credentials, and model cache**, so leave enough free space for the uncompressed data size plus 64 MB. The old Compose file, `.env`, password hash, and image metadata are retained too. The private folder is ignored by Git/Docker. Do not publish it. Archives are gzip-checked and have a SHA-256 checksum. Backups and images are never automatically pruned.
+
+The digest is recorded in `.env`. The replacement is created without starting; its image and data/password mounts are checked first. Startup waits up to 180 seconds for Docker health (`HEALTH_TIMEOUT=300` can extend this). Sign in again and check models, import jobs, source counts, notes, and MCP. HTTP health does not prove model readiness.
+
+Download/preflight failure leaves the current app running. Backup failure restarts the original container. Creation/startup/health failure stops the replacement and retains backups. **There is no automatic rollback:** migrations may already have run. Inspect logs and `update.txt`. A compatible rollback can use the retained image; an incompatible rollback also needs stopped data restored into an empty recovery folder and the old configuration pointed at it. Never unpack over an active/non-empty database or run both images against the same data. Physical snapshots are for recovery on the same NAS; use the portable ZIP for Windows/Linux migration.
+
+Backups can contain secrets and grow large. Remove old backups/images intentionally after confirming a working release. After an interrupted update, check containers and the lock's PID before removing a stale `.orbit-update.lock`.
+
+### Deployment checks
 
 Before transferring a newly built image, `npm.cmd run test:container` checks its non-root, read-only Linux runtime with an isolated synthetic data volume: password login/logout, MCP scopes, background imports, backup export, SQL inspection, clean shutdown, and persistent data/tokens after restart. It removes its own container and volume afterward. `npm.cmd run test:container -- --with-model` additionally checks offline CPU inference against the public model cache in `.data/models/` (prepare it with `npm.cmd run models:download`). The desktop knowledge database is never mounted by this check. Browser checks use `npm.cmd run test:e2e`; the HTTPS fixture needs OpenSSL on PATH, or the copy bundled with Git for Windows.
 
@@ -115,7 +154,7 @@ To inspect on the NAS, stop the main container, then run a temporary container o
 ```sh
 docker run --rm --user 1026:100 \
   -v /volume1/docker/orbit/data:/data \
-  --entrypoint node orbit:nas-spike \
+  --entrypoint node ghcr.io/mattz1337/orbit:0.2.0 \
   build/scripts/inspect-db.js /data/postgres --stopped
 ```
 
