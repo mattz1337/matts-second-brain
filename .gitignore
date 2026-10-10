@@ -1,5 +1,7 @@
 node_modules/
 dist/
+build/
+.secrets/
 .data/
 .env
 .env.*
@@ -8,3 +10,6 @@ playwright-report/
 test-results/
 *.log
 *.nsx
+orbit-*.tar
+.tmp-orbit-*.tar*
+commonplace-*.tar

@@ -1,4 +1,8 @@
-import type { ClassificationInput, CategorySuggestion } from './categorization.js';
+import {
+  suggestCategories,
+  type ClassificationInput,
+  type CategorySuggestion,
+} from './categorization.js';
 
 export interface CategoryEmbedder {
   state: string;
@@ -120,7 +124,7 @@ export const CATEGORY_PROTOTYPES: CategoryPrototype[] = [
   {
     path: ['Leisure', 'Games & hobbies'],
     description:
-      'Video games, board games, recreational hobbies, sports events, entertainment and free time activities. Computerspiele, Brettspiele, Freizeit, Hobbys, Unterhaltung und Freizeitaktivitäten.',
+      'Video games, board games, recreational hobbies, cycling, mountain biking, sports events, entertainment and free time activities. Computerspiele, Brettspiele, Radfahren, Mountainbike, MTB, Freizeit, Hobbys und Freizeitaktivitäten.',
   },
   {
     path: ['Society', 'Law & administration'],
@@ -139,6 +143,13 @@ export interface SemanticSuggestion extends CategorySuggestion {
   margin: number;
   auto_applied: boolean;
   model_id: string;
+  level: 'specific' | 'broad';
+  basis: 'semantic' | 'corroborated' | 'title_corroborated' | 'notebook_context' | 'broad';
+}
+export interface NotebookContext {
+  path: string[];
+  support: number;
+  peers: number;
 }
 export interface SemanticResult {
   suggestions: SemanticSuggestion[];
@@ -194,6 +205,7 @@ export class SemanticCategories {
   async analyze(
     input: ClassificationInput,
     extra: CategoryPrototype[] = [],
+    notebookContext?: NotebookContext,
   ): Promise<SemanticResult> {
     const catalog = [...CATEGORY_PROTOTYPES, ...extra];
     const prototypes = await Promise.all(
@@ -235,13 +247,27 @@ export class SemanticCategories {
       );
     const best = ranked[0].score;
     const separation = best - (ranked[1]?.score || 0);
+    const rules = suggestCategories(input).filter((item) => item.method === 'content_rule');
+    const meaningful =
+      (input.text.match(/\p{L}/gu) || []).length >= 12 ||
+      ((input.title.match(/\p{L}/gu) || []).length >= 16 &&
+        !/^https?:\/\/\S+$/i.test(input.title.trim())) ||
+      rules.length > 0 ||
+      input.tags.some((tag) => tag.trim().length >= 4);
     const suggestions = ranked
       .filter((match) => match.score >= this.minSimilarity && best - match.score <= 0.045)
       .slice(0, 3)
       .map((match, i): SemanticSuggestion => {
+        const corroboration = rules.find(
+          (rule) =>
+            rule.path.join('/') === match.prototype.path.join('/') &&
+            (match.prototype.namespace || 'topics') === rule.namespace,
+        );
         const auto =
-          match.score >= this.autoSimilarity &&
-          (i === 0 ? separation >= 0.008 || match.score >= 0.88 : match.score >= 0.86);
+          (meaningful || match.score >= 0.9) &&
+          ((match.score >= this.autoSimilarity &&
+            (i === 0 ? separation >= 0.008 || match.score >= 0.88 : match.score >= 0.86)) ||
+            (!!corroboration && match.score >= this.minSimilarity));
         const confidence = auto
           ? match.score >= 0.86 && separation >= 0.02
             ? 'high'
@@ -252,14 +278,118 @@ export class SemanticCategories {
           namespace: match.prototype.namespace || 'topics',
           method: 'semantic',
           rationale:
+            (corroboration
+              ? `Meaning and explicit topic keywords agree. ${corroboration.rationale} `
+              : '') +
             'Local semantic comparison of note content, title, tags, notebook and stack with the category description. Similarity and confidence are model estimates, not probabilities or factual verification.',
           confidence,
           similarity: Number(match.score.toFixed(4)),
           margin: Number(separation.toFixed(4)),
           auto_applied: auto,
           model_id: this.embedder.modelId,
+          level: 'specific',
+          basis: corroboration ? 'corroborated' : 'semantic',
         };
       });
+    let headingWinner: CategoryPrototype | undefined;
+    if (
+      !suggestions.some((item) => item.auto_applied) &&
+      meaningful &&
+      (input.title.match(/\p{L}/gu) || []).length >= 16 &&
+      !/^https?:\/\/\S+$/i.test(input.title.trim())
+    ) {
+      const heading = await this.embedder.embed(
+        `Title: ${input.title}\nTags: ${input.tags.join(', ')}\nContent: ${input.title}`,
+        true,
+      );
+      if (!heading) throw new Error('Local embedding model is unavailable.');
+      const headingRanked = catalog
+        .map((prototype, i) => ({ prototype, score: cosine(heading, prototypes[i]) }))
+        .sort((a, b) => b.score - a.score);
+      const first = headingRanked[0];
+      if (
+        first.score >= this.autoSimilarity &&
+        (first.score - headingRanked[1].score >= 0.008 || first.score >= 0.88)
+      ) {
+        headingWinner = first.prototype;
+        const agreement = suggestions.find(
+          (item) =>
+            item.path.join('/') === first.prototype.path.join('/') &&
+            item.namespace === (first.prototype.namespace || 'topics'),
+        );
+        if (agreement) {
+          agreement.auto_applied = true;
+          agreement.confidence = 'medium';
+          agreement.basis = 'title_corroborated';
+          agreement.rationale =
+            'Separate interpretation of the title and tags agrees with this content-based suggestion. This resolves a close content match; it remains a reviewable organization suggestion, not factual verification.';
+        }
+      }
+    }
+    // Peer subjects only resolve a retained, close content match. They never replace
+    // a clear subject, and generic/mixed notebooks do not supply a context vote.
+    if (meaningful && notebookContext && !suggestions.some((item) => item.auto_applied)) {
+      const agreement = suggestions.find(
+        (item) =>
+          item.namespace === 'topics' && item.path.join('/') === notebookContext.path.join('/'),
+      );
+      const headingAgrees =
+        !headingWinner || headingWinner.path.join('/') === notebookContext.path.join('/');
+      if (agreement && headingAgrees && agreement.similarity >= this.autoSimilarity) {
+        agreement.auto_applied = true;
+        agreement.confidence = 'medium';
+        agreement.basis = 'notebook_context';
+        agreement.rationale = `${notebookContext.support} of ${notebookContext.peers} other notes in this notebook independently support this subject and agree with a close content match. Notebook context is supporting evidence for organization, not a subject category or factual verification.`;
+      }
+    }
+    // A close choice between siblings can still provide a reliable broader subject.
+    // Compare against every competing branch, rather than hiding the note merely
+    // because two children of the same branch are hard to distinguish.
+    if (
+      meaningful &&
+      !suggestions.some((item) => item.auto_applied) &&
+      best >= this.autoSimilarity
+    ) {
+      const first = ranked[0],
+        second = ranked[1];
+      const namespace = first.prototype.namespace || 'topics';
+      const parent: string[] = [];
+      if (namespace === (second?.prototype.namespace || 'topics')) {
+        for (
+          let i = 0;
+          i < Math.min(first.prototype.path.length, second.prototype.path.length) - 1;
+          i++
+        ) {
+          if (first.prototype.path[i] !== second.prototype.path[i]) break;
+          parent.push(first.prototype.path[i]);
+        }
+      }
+      const outside = ranked.find(
+        (match) =>
+          (match.prototype.namespace || 'topics') !== namespace ||
+          parent.some((part, i) => match.prototype.path[i] !== part),
+      );
+      const margin = best - (outside?.score ?? 1);
+      const headingAgrees =
+        !headingWinner ||
+        ((headingWinner.namespace || 'topics') === namespace &&
+          parent.every((part, i) => headingWinner!.path[i] === part));
+      if (parent.length && headingAgrees && best - second.score < 0.008 && margin >= 0.008) {
+        suggestions.unshift({
+          path: parent,
+          namespace,
+          method: 'semantic',
+          rationale: `The closest specific subjects share the ${parent.join(' / ')} branch and are too close to choose between. This broader subject is separated from other branches; review the specific suggestions to narrow it. Organization only, not factual verification.`,
+          confidence: 'medium',
+          similarity: Number(best.toFixed(4)),
+          margin: Number(margin.toFixed(4)),
+          auto_applied: true,
+          model_id: this.embedder.modelId,
+          level: 'broad',
+          basis: 'broad',
+        });
+      }
+    }
     return { suggestions, chunks: windows.length, truncated };
   }
 }

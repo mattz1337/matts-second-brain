@@ -1,0 +1,88 @@
+.login-page {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 32px 20px;
+  background:
+    radial-gradient(ellipse at 15% 10%, #96b8ff1a, transparent 50%),
+    radial-gradient(ellipse at 80% 70%, #b7a7ff18, transparent 45%);
+}
+.login-appearance {
+  position: absolute;
+  right: 24px;
+  top: 24px;
+}
+.login-panel {
+  width: min(420px, 100%);
+  padding: 42px 36px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 26px;
+  box-shadow: 0 20px 80px #1528540c;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.login-icon {
+  border: 1px solid var(--border);
+  color: var(--green);
+  padding: 17px;
+  border-radius: 20px;
+  margin-bottom: 24px;
+}
+.login-panel h1 {
+  font-size: 32px;
+  letter-spacing: -1px;
+  margin-top: 12px;
+  font-weight: 650;
+}
+.login-panel > p {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 12px 0 28px;
+}
+.login-panel form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.login-panel label {
+  color: var(--muted);
+  font-size: 13px;
+}
+.login-panel input {
+  color: var(--ink);
+  background: var(--sage);
+  border: 1px solid var(--border);
+  padding: 12px 14px;
+  border-radius: 11px;
+  font-size: 16px;
+}
+.login-panel .button {
+  width: 100%;
+  justify-content: center;
+  padding: 12px;
+  margin-top: 4px;
+}
+.login-panel > small {
+  color: var(--muted);
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.6;
+  margin-top: 24px;
+}
+@media (max-width: 460px) {
+  .login-panel {
+    padding: 32px 24px;
+  }
+  .topbar:has([aria-label='Sign out']) {
+    gap: 5px;
+  }
+  .topbar:has([aria-label='Sign out']) .global-search {
+    padding: 7px;
+  }
+  .topbar:has([aria-label='Sign out']) .global-search input {
+    font-size: 11px;
+  }
+}

@@ -1,11 +1,11 @@
 /** Local, explainable organization suggestions. These rules do not verify content. */
-export const CATEGORY_ENGINE = 'semantic-taxonomy-v2';
+export const CATEGORY_ENGINE = 'semantic-taxonomy-v5';
 export interface ClassificationInput {
   title: string;
   text: string;
   tags: string[];
   project: string;
-  metadata?: { notebook?: string; stack?: string } | null;
+  metadata?: { notebook?: string; notebook_id?: string; stack?: string } | null;
 }
 export interface CategorySuggestion {
   path: string[];
@@ -143,6 +143,8 @@ const rules: [string[], string[]][] = [
       'haushalt',
       'furniture',
       'möbel',
+      'wohnung',
+      'apartment',
     ],
   ],
   [
@@ -210,6 +212,65 @@ const rules: [string[], string[]][] = [
       'fotografie',
     ],
   ],
+  [
+    ['Culture', 'Art & creativity'],
+    [
+      'piano',
+      'klavier',
+      'gitarre',
+      'guitar',
+      'zeichnen',
+      'drawing',
+      'malen',
+      'painting',
+      'photography',
+      'fotografie',
+    ],
+  ],
+  [
+    ['Life', 'Personal organization'],
+    [
+      'checklist',
+      'checkliste',
+      'shopping list',
+      'einkaufsliste',
+      'packing list',
+      'packliste',
+      'todo',
+      'to do',
+    ],
+  ],
+  [
+    ['Life', 'Family & relationships'],
+    ['parenting', 'erziehung', 'geburtstag', 'birthday', 'hochzeit', 'wedding'],
+  ],
+  [
+    ['Money', 'Taxes & insurance'],
+    [
+      'steuererklarung',
+      'steuerbescheid',
+      'tax return',
+      'tax deduction',
+      'insurance',
+      'versicherung',
+    ],
+  ],
+  [
+    ['Technology', 'Security & privacy'],
+    [
+      'password',
+      'passwort',
+      'encryption',
+      'verschlusselung',
+      'datenschutz',
+      'authentication',
+      'authentifizierung',
+    ],
+  ],
+  [
+    ['Leisure', 'Games & hobbies'],
+    ['board game', 'brettspiel', 'videogame', 'videospiel', 'mountainbike', 'mtb'],
+  ],
 ];
 const normalized = (value: string) =>
   value.toLowerCase().replace(/ß/g, 'ss').normalize('NFKD').replace(/\p{M}/gu, '');
@@ -222,7 +283,12 @@ function hits(value: string, words: string[]) {
 }
 export function suggestCategories(input: ClassificationInput): CategorySuggestion[] {
   const result: CategorySuggestion[] = [];
-  const prominent = [input.title, ...input.tags].join('\n');
+  const prominent = [
+    input.title,
+    ...input.tags,
+    input.metadata?.notebook || input.project,
+    input.metadata?.stack || '',
+  ].join('\n');
   const ranked = rules
     .map(([path, words]) => {
       const heading = hits(prominent, words);
@@ -263,18 +329,6 @@ export function suggestCategories(input: ClassificationInput): CategorySuggestio
       method: 'fallback',
       rationale:
         'No sufficiently specific local category rule matched. Review or add a hierarchical tag.',
-    });
-  if (input.metadata?.notebook)
-    result.push({
-      path: [
-        'Notebooks',
-        ...(input.metadata.stack ? [input.metadata.stack] : []),
-        input.metadata.notebook,
-      ],
-      namespace: 'collections',
-      method: 'metadata',
-      rationale:
-        'Original Note Station stack and notebook; organizational metadata, not an inferred subject.',
     });
   return result;
 }

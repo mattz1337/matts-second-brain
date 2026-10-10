@@ -3,9 +3,11 @@ import path from 'node:path';
 
 export const config = {
   port: Number(process.env.PORT || 4310),
+  host: process.env.HOST || '127.0.0.1',
   dataDir: path.resolve(process.env.DATA_DIR || '.data'),
   seedDemo: process.env.SEED_DEMO !== 'false',
   embeddings: process.env.EMBEDDINGS || 'local',
+  embeddingThreads: Math.max(1, Math.min(8, Number(process.env.EMBEDDING_THREADS || 2) || 2)),
   model: process.env.EMBEDDING_MODEL || 'Xenova/multilingual-e5-small',
   semanticMinScore: Number(process.env.SEMANTIC_MIN_SCORE || 0.8),
   categoryMinSimilarity: Number(process.env.CATEGORY_MIN_SIMILARITY || 0.78),

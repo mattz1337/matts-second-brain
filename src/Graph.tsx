@@ -10,11 +10,14 @@ import {
   RotateCcw,
   Search,
   X,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import type { GraphNode, GraphResult } from '../shared/contracts';
 import { pretty } from './api';
 import { createGlobeScene, globeColors, type GlobeScene } from './globe-scene';
 import './globe.css';
+import GraphNodePreview from './GraphNodePreview';
 
 export default function Graph({
   data,
@@ -22,13 +25,19 @@ export default function Graph({
   onSelect,
   onFocus,
   onCategorize,
+  revision = 0,
 }: {
   data: GraphResult;
   compact?: boolean;
   onSelect: (id: string, type: string) => void;
   onFocus?: (id: string) => void;
   onCategorize?: (id: string) => void;
+  revision?: number;
 }) {
+  const frame = useRef<HTMLDivElement>(null);
+  const fullscreenButton = useRef<HTMLButtonElement>(null);
+  const nativeFullscreen = useRef(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const container = useRef<HTMLDivElement>(null);
   const instance = useRef<GlobeScene | null>(null);
   const [list, setList] = useState(false);
@@ -43,6 +52,80 @@ export default function Graph({
   const [selected, setSelected] = useState<string | null>(null);
   const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number } | null>(null);
   const callbacks = useRef({ choose: (_node: GraphNode) => {} });
+  useEffect(() => {
+    const changed = () => {
+      if (document.fullscreenElement === frame.current) {
+        nativeFullscreen.current = true;
+        setFullscreen(true);
+      } else if (nativeFullscreen.current) {
+        nativeFullscreen.current = false;
+        setFullscreen(false);
+        fullscreenButton.current?.focus();
+      }
+    };
+    document.addEventListener('fullscreenchange', changed);
+    return () => {
+      document.removeEventListener('fullscreenchange', changed);
+      if (document.fullscreenElement === frame.current)
+        void document.exitFullscreen().catch(() => {});
+    };
+  }, []);
+  useEffect(() => {
+    if (!fullscreen) return;
+    const old = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        void leaveFullscreen();
+      }
+      if (event.key === 'Tab') {
+        const elements = [
+          ...(frame.current?.querySelectorAll<HTMLElement>(
+            'button:not(:disabled),select:not(:disabled),a[href]',
+          ) || []),
+        ].filter((element) => element.getClientRects().length > 0);
+        const first = elements[0],
+          last = elements.at(-1);
+        if (
+          !frame.current?.contains(document.activeElement) ||
+          (event.shiftKey && document.activeElement === first) ||
+          (!event.shiftKey && document.activeElement === last)
+        ) {
+          event.preventDefault();
+          (event.shiftKey ? last : first)?.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', key);
+    return () => {
+      document.body.style.overflow = old;
+      document.removeEventListener('keydown', key);
+    };
+  }, [fullscreen]);
+  async function leaveFullscreen() {
+    if (document.fullscreenElement === frame.current)
+      await document.exitFullscreen().catch(() => {});
+    setFullscreen(false);
+    fullscreenButton.current?.focus();
+  }
+  async function toggleFullscreen() {
+    if (fullscreen) return leaveFullscreen();
+    setFullscreen(true);
+    try {
+      await frame.current?.requestFullscreen?.();
+    } catch {
+      /* Keep the viewport-filling mode when the browser blocks native fullscreen. */
+    }
+  }
+  async function openSelected(id: string, type: string) {
+    await leaveFullscreen();
+    onSelect(id, type);
+  }
+  async function categorizeSelected(id: string) {
+    await leaveFullscreen();
+    onCategorize?.(id);
+  }
   const movingRef = useRef(moving);
   movingRef.current = moving;
   const selectedRef = useRef(selected);
@@ -122,7 +205,9 @@ export default function Graph({
   };
   return (
     <div
-      className={`graph-component knowledge-globe ${compact ? 'compact' : ''} ${list ? 'list-mode' : ''}`}
+      ref={frame}
+      data-fullscreen={fullscreen}
+      className={`graph-component knowledge-globe ${compact ? 'compact' : ''} ${list ? 'list-mode' : ''} ${fullscreen ? 'graph-fullscreen' : ''} ${!compact && node ? 'has-preview' : ''}`}
     >
       {!compact && (
         <div className="globe-toolbar">
@@ -170,6 +255,16 @@ export default function Graph({
               </button>
             </div>
           )}
+          <button
+            ref={fullscreenButton}
+            className="globe-fullscreen-button"
+            aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+            aria-pressed={fullscreen}
+            onClick={() => void toggleFullscreen()}
+          >
+            {fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            <span>{fullscreen ? 'Exit fullscreen' : 'Fullscreen'}</span>
+          </button>
         </div>
       )}
       {list && (
@@ -191,7 +286,11 @@ export default function Graph({
               {data.nodes.map((item) => (
                 <tr key={item.id}>
                   <td>
-                    <button className="text-button" onClick={() => onSelect(item.id, item.type)}>
+                    <button
+                      className="text-button"
+                      aria-pressed={item.id === selected}
+                      onClick={() => choose(item)}
+                    >
                       <i style={{ background: globeColors[item.type] }} />
                       {item.label}
                     </button>
@@ -258,65 +357,7 @@ export default function Graph({
               <i />
               <span>S</span>
             </div>
-            {node ? (
-              <div className="globe-selection" key={node.id}>
-                <button className="globe-close" aria-label="Clear node selection" onClick={reset}>
-                  <X size={15} />
-                </button>
-                <div className="globe-selection-type">
-                  <i style={{ background: globeColors[node.type] }} />
-                  {pretty(node.type)}
-                  {node.lifecycle === 'candidate' && ' · Candidate'}
-                  {node.freshness &&
-                    !['current', 'unknown'].includes(node.freshness) &&
-                    ` · ${pretty(node.freshness)}`}
-                </div>
-                <h3>{node.label}</h3>
-                <p>
-                  {connections.length} {connections.length === 1 ? 'connection' : 'connections'} in
-                  this view
-                </p>
-                <div className="globe-connection-chips">
-                  {connections.slice(0, 3).map((edge) => {
-                    const target = data.nodes.find(
-                      (item) => item.id === (edge.source === node.id ? edge.target : edge.source),
-                    );
-                    return (
-                      target && (
-                        <button
-                          key={edge.id}
-                          title={`${pretty(edge.type)}: ${target.label}${edge.properties?.rationale ? ` — ${edge.properties.rationale}` : ''}`}
-                          onClick={() => choose(target)}
-                        >
-                          {pretty(edge.type)} <span>{target.label}</span>
-                        </button>
-                      )
-                    );
-                  })}
-                </div>
-                {connections
-                  .filter((edge) => edge.source === node.id && edge.type === 'categorized_as')
-                  .slice(0, 3)
-                  .map((edge) => (
-                    <p className="category-reason" key={edge.id}>
-                      {data.nodes.find((item) => item.id === edge.target)?.label}:{' '}
-                      {edge.properties?.confidence &&
-                        `${edge.properties.status === 'confirmed' ? 'Confirmed' : 'Suggested'} · ${edge.properties.confidence} confidence · `}
-                      {edge.properties?.rationale}
-                    </p>
-                  ))}
-                <div className="globe-selection-actions">
-                  <button onClick={() => onSelect(node.id, node.type)}>
-                    {node.type === 'category' ? 'Explore category' : 'Open knowledge'}{' '}
-                    <ArrowUpRight size={14} />
-                  </button>
-                  {onFocus && <button onClick={() => onFocus(node.id)}>Focus connections</button>}
-                  {onCategorize && ['claim', 'note', 'source'].includes(node.type) && (
-                    <button onClick={() => onCategorize(node.id)}>Organize categories</button>
-                  )}
-                </div>
-              </div>
-            ) : (
+            {!node && (
               <div className="globe-caption">
                 <Globe2 size={18} />
                 <div>
@@ -366,6 +407,92 @@ export default function Graph({
           </div>
         )}
       </div>
+      {!compact && node && (
+        <aside className="graph-reading-panel" aria-label="Selected graph node">
+          <div className="node-preview-heading">
+            <div>
+              <span className="globe-selection-type">
+                {pretty(node.type)}
+                {node.lifecycle === 'candidate' ? ' · Candidate' : ''}
+              </span>
+              <h3>{node.label}</h3>
+            </div>
+            <button
+              className="node-preview-close"
+              aria-label="Clear node selection"
+              onClick={reset}
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div className="node-preview-body">
+            {['claim', 'note', 'source'].includes(node.type) && (
+              <GraphNodePreview key={node.id} node={node} revision={revision} />
+            )}
+            <details
+              className="node-connections"
+              open={!['claim', 'note', 'source'].includes(node.type)}
+            >
+              <summary>
+                {connections.length} {connections.length === 1 ? 'connection' : 'connections'} in
+                this view
+              </summary>
+              <div className="globe-connection-chips">
+                {connections.slice(0, 8).map((edge) => {
+                  const target = data.nodes.find(
+                    (item) => item.id === (edge.source === node.id ? edge.target : edge.source),
+                  );
+                  return (
+                    target && (
+                      <button
+                        key={edge.id}
+                        title={edge.properties?.rationale}
+                        onClick={() => choose(target)}
+                      >
+                        {pretty(edge.type)} <span>{target.label}</span>
+                      </button>
+                    )
+                  );
+                })}
+              </div>
+              {connections
+                .filter((edge) => edge.source === node.id && edge.type === 'categorized_as')
+                .slice(0, 3)
+                .map((edge) => (
+                  <p className="category-reason" key={edge.id}>
+                    {data.nodes.find((item) => item.id === edge.target)?.label}:{' '}
+                    {edge.properties?.rationale}
+                  </p>
+                ))}
+            </details>
+          </div>
+          <div className="node-preview-actions">
+            <button
+              className="button small primary"
+              onClick={() => void openSelected(node.id, node.type)}
+            >
+              {node.type === 'category'
+                ? 'Explore category'
+                : node.type === 'source'
+                  ? 'Open source'
+                  : node.type === 'entity'
+                    ? 'Open entity'
+                    : 'Open knowledge'}
+              <ArrowUpRight size={14} />
+            </button>
+            {onFocus && (
+              <button className="button small" onClick={() => onFocus(node.id)}>
+                Focus connections
+              </button>
+            )}
+            {onCategorize && ['claim', 'note', 'source'].includes(node.type) && (
+              <button className="button small" onClick={() => void categorizeSelected(node.id)}>
+                Organize categories
+              </button>
+            )}
+          </div>
+        </aside>
+      )}
       {!compact && (
         <div className="globe-footer">
           <div className="globe-legend">

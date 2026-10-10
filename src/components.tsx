@@ -103,31 +103,46 @@ export function Modal({
   children,
   onClose,
   wide = false,
+  closeDisabled = false,
+  initialFocus,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   wide?: boolean;
+  closeDisabled?: boolean;
+  initialFocus?: string;
 }) {
   const dialog = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
-  close.current = onClose;
+  close.current = () => {
+    if (!closeDisabled) onClose();
+  };
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
-    dialog.current?.querySelector<HTMLElement>('input,button,textarea')?.focus();
+    dialog.current?.querySelector<HTMLElement>(initialFocus || 'input,button,textarea')?.focus();
     const old = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close.current();
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        close.current();
+      }
       if (e.key === 'Tab') {
         const focusable = [
           ...(dialog.current?.querySelectorAll<HTMLElement>(
             'button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),a[href]',
           ) || []),
-        ];
+        ].filter((element) => element.getClientRects().length > 0);
         const first = focusable[0],
           last = focusable[focusable.length - 1];
-        if (e.shiftKey && document.activeElement === first) {
+        if (!first) {
+          e.preventDefault();
+          dialog.current?.focus();
+        } else if (!dialog.current?.contains(document.activeElement)) {
+          e.preventDefault();
+          (e.shiftKey ? last : first)?.focus();
+        } else if (e.shiftKey && document.activeElement === first) {
           e.preventDefault();
           last?.focus();
         } else if (!e.shiftKey && document.activeElement === last) {
@@ -147,19 +162,25 @@ export function Modal({
     <div
       className="modal-overlay"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) close.current();
       }}
     >
       <div
         ref={dialog}
         className={`modal ${wide ? 'wide' : ''}`}
         role="dialog"
+        tabIndex={-1}
         aria-modal="true"
         aria-label={title}
       >
         <div className="modal-heading">
           <h2>{title}</h2>
-          <button className="icon-button" onClick={onClose} aria-label="Close dialog">
+          <button
+            className="icon-button"
+            onClick={() => close.current()}
+            disabled={closeDisabled}
+            aria-label="Close dialog"
+          >
             <X size={20} />
           </button>
         </div>

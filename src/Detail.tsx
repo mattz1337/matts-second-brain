@@ -16,6 +16,7 @@ import type { Detail as DetailType, Knowledge, Source } from '../shared/contract
 import { Modal, Badge, Loading } from './components';
 import { api, date, key, pretty } from './api';
 import Capture from './Capture';
+import DocumentContent from './DocumentContent';
 
 export default function Detail({
   id,
@@ -142,7 +143,9 @@ export default function Detail({
             <span className="version-label">Version {item.version}</span>
           </div>
           <h2 className="detail-title">{item.title}</h2>
-          <p className="detail-statement">{item.statement}</p>
+          <div className="detail-statement">
+            <DocumentContent text={item.statement} />
+          </div>
           <div className="detail-topics">
             {item.tags.map((tag) => (
               <span key={tag} className="tag">

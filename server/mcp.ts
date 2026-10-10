@@ -164,7 +164,7 @@ export async function invokeTool(
   }
 }
 export function createMcpServer(invoke: (name: string, args: unknown) => Promise<unknown>) {
-  const server = new McpServer({ name: 'commonplace-second-brain', version: '0.1.0' });
+  const server = new McpServer({ name: 'orbit-second-brain', version: '0.1.0' });
   for (const [name, definition] of Object.entries(toolDefinitions)) {
     server.registerTool(
       name,

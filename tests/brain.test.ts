@@ -509,31 +509,36 @@ describe('retrieval, graph, and recovery', () => {
     expect((await service.getJob(owner, unsafe.id)).status).toBe('failed');
     expect((await service.getJob(owner, unsafe.id)).error).toMatch(/Private/);
   });
-  it('exports and restores IDs, original sources, versions, and search behavior', async () => {
-    const j = await imported();
-    const item = (await service.reviewQueue(owner)).candidates[0];
-    await service.review(owner, item.id, {
-      expected_version: 1,
-      decision: 'accept',
-      rationale: 'Keep it before export.',
-    });
-    const archive = await service.exportData(owner);
-    const fresh = await openDatabase();
-    try {
-      const restored = new BrainService(fresh);
-      const result = await restored.restoreData(owner, archive);
-      expect(result.restored).toBeGreaterThan(0);
-      expect((await restored.getKnowledge(owner, item.id)).versions).toHaveLength(2);
-      expect(
-        (await restored.search(owner, { query: item.statement.split(' ')[0] })).items.some(
-          (k) => k.id === item.id,
-        ),
-      ).toBe(true);
-      expect((await restored.sourceDetail(owner, j.result.source_id!)).revisions).toHaveLength(1);
-    } finally {
-      await fresh.close();
-    }
-  });
+  it.each(['orbit-export', 'commonplace-export'])(
+    'restores %s IDs, original sources, versions, and search behavior',
+    async (format) => {
+      const j = await imported();
+      const item = (await service.reviewQueue(owner)).candidates[0];
+      await service.review(owner, item.id, {
+        expected_version: 1,
+        decision: 'accept',
+        rationale: 'Keep it before export.',
+      });
+      const archive = await service.exportData(owner);
+      expect(archive.format).toBe('orbit-export');
+      archive.format = format;
+      const fresh = await openDatabase();
+      try {
+        const restored = new BrainService(fresh);
+        const result = await restored.restoreData(owner, archive);
+        expect(result.restored).toBeGreaterThan(0);
+        expect((await restored.getKnowledge(owner, item.id)).versions).toHaveLength(2);
+        expect(
+          (await restored.search(owner, { query: item.statement.split(' ')[0] })).items.some(
+            (k) => k.id === item.id,
+          ),
+        ).toBe(true);
+        expect((await restored.sourceDetail(owner, j.result.source_id!)).revisions).toHaveLength(1);
+      } finally {
+        await fresh.close();
+      }
+    },
+  );
   it('uses actual vector similarity in PostgreSQL', async () => {
     const a = await service.addKnowledge(owner, input({ title: 'First vector' }));
     const b = await service.addKnowledge(owner, input({ title: 'Second vector' }));

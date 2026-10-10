@@ -1,9 +1,17 @@
-import { useState } from 'react';
-import { CheckCircle2, Clock, ShieldCheck, ArrowRight } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import {
+  CheckCircle2,
+  Clock,
+  ShieldCheck,
+  ArrowRight,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react';
 import { api } from './api';
 import { useResource } from './hooks';
 import { SectionHeading, KnowledgeCard, Loading, Empty, Modal } from './components';
 import type { Knowledge } from '../shared/contracts';
+import { useUrlState } from './navigation';
 
 export default function Review({
   revision,
@@ -14,8 +22,12 @@ export default function Review({
   onOpen: (id: string) => void;
   onChanged: () => void;
 }) {
-  const [tab, setTab] = useState<'candidates' | 'due' | 'conflicts'>('candidates');
-  const { data, error, loading } = useResource(
+  const [tab, setTab] = useUrlState<'candidates' | 'due' | 'conflicts'>(
+    'review_tab',
+    'candidates',
+    ['candidates', 'due', 'conflicts'],
+  );
+  const { data, error, loading, retry } = useResource(
     () => api<{ candidates: Knowledge[]; due: Knowledge[]; conflicts: Knowledge[] }>('/review'),
     [revision],
   );
@@ -24,7 +36,26 @@ export default function Review({
   const [rationale, setRationale] = useState('');
   const [busy, setBusy] = useState(false);
   const [batchError, setBatchError] = useState('');
+  const [page, setPage] = useState(0);
+  const [notice, setNotice] = useState('');
+  const items = data?.[tab] || [];
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(items.length / 25) - 1));
+  const visible = items.slice(currentPage * 25, (currentPage + 1) * 25);
+  const pageSelected = visible.length > 0 && visible.every((item) => selected.includes(item.id));
+  useEffect(() => {
+    setPage(0);
+    setSelected([]);
+    setBatchError('');
+    setNotice('');
+  }, [tab]);
+  useEffect(() => {
+    if (loading || !data) return;
+    setSelected((previous) =>
+      previous.filter((id) => data.candidates.some((item) => item.id === id)),
+    );
+  }, [data, loading]);
   async function reviewBatch() {
+    if (busy || loading || !selected.length) return;
     setBusy(true);
     setBatchError('');
     try {
@@ -39,13 +70,21 @@ export default function Review({
         },
       );
       const failed = result.results.filter((r) => !r.ok);
-      if (failed.length)
+      if (failed.length) {
         setBatchError(
           `${failed.length} items could not be reviewed: ${failed.map((r) => r.error).join('; ')}`,
         );
-      setBatch(null);
-      setSelected([]);
-      setRationale('');
+        setSelected(failed.map((item) => item.id));
+      } else {
+        setBatch(null);
+        setSelected([]);
+        setRationale('');
+      }
+      const succeeded = result.results.length - failed.length;
+      if (succeeded)
+        setNotice(
+          `${batch === 'accept' ? 'Accepted' : 'Rejected'} ${succeeded} ${succeeded === 1 ? 'candidate' : 'candidates'}.`,
+        );
       onChanged();
     } catch (e) {
       setBatchError((e as Error).message);
@@ -99,7 +138,17 @@ export default function Review({
       {(error || batchError) && (
         <div className="inline-error" role="alert">
           {error || batchError}
+          {error && (
+            <button className="button small" onClick={retry}>
+              Try again
+            </button>
+          )}
         </div>
+      )}
+      {notice && (
+        <p className="review-notice" aria-live="polite">
+          {notice}
+        </p>
       )}
       {loading && !data ? (
         <Loading />
@@ -117,42 +166,53 @@ export default function Review({
               <label className="checkbox-label">
                 <input
                   type="checkbox"
-                  checked={
-                    !!selected.length && selected.length === Math.min(50, data.candidates.length)
-                  }
+                  checked={pageSelected}
+                  disabled={!pageSelected && selected.length >= 50}
                   onChange={(e) =>
                     setSelected(
-                      e.target.checked ? data.candidates.slice(0, 50).map((k) => k.id) : [],
+                      e.target.checked
+                        ? [...new Set([...selected, ...visible.map((item) => item.id)])].slice(
+                            0,
+                            50,
+                          )
+                        : selected.filter((id) => !visible.some((item) => item.id === id)),
                     )
                   }
                 />
-                Select candidates
+                Select this page
               </label>
-              <span>{selected.length} selected</span>
+              <span>{selected.length} of 50 selected</span>
               <button
                 className="button small"
                 disabled={!selected.length}
-                onClick={() => setBatch('accept')}
+                onClick={() => {
+                  setBatchError('');
+                  setBatch('accept');
+                }}
               >
                 Accept selected
               </button>
               <button
                 className="button small"
                 disabled={!selected.length}
-                onClick={() => setBatch('reject')}
+                onClick={() => {
+                  setBatchError('');
+                  setBatch('reject');
+                }}
               >
                 Reject selected
               </button>
             </div>
           )}
           <div className="knowledge-list">
-            {data[tab].map((k) => (
+            {visible.map((k) => (
               <div className="review-row" key={k.id}>
                 {tab === 'candidates' && (
                   <input
                     aria-label={`Select ${k.title}`}
                     type="checkbox"
                     checked={selected.includes(k.id)}
+                    disabled={!selected.includes(k.id) && selected.length >= 50}
                     onChange={(e) =>
                       setSelected(
                         e.target.checked
@@ -166,6 +226,32 @@ export default function Review({
               </div>
             ))}
           </div>
+          {items.length > 25 && (
+            <div className="pagination">
+              <button
+                className="button small"
+                aria-label="Previous review page"
+                disabled={!currentPage}
+                onClick={() => setPage(currentPage - 1)}
+              >
+                <ChevronLeft size={14} />
+                Previous
+              </button>
+              <span>
+                {currentPage * 25 + 1}–{Math.min((currentPage + 1) * 25, items.length)} of{' '}
+                {items.length}
+              </span>
+              <button
+                className="button small"
+                aria-label="Next review page"
+                disabled={(currentPage + 1) * 25 >= items.length}
+                onClick={() => setPage(currentPage + 1)}
+              >
+                Next
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
         </>
       ) : (
         <Empty
@@ -189,6 +275,8 @@ export default function Review({
         <Modal
           title={batch === 'accept' ? 'Accept selected candidates' : 'Reject selected candidates'}
           onClose={() => setBatch(null)}
+          closeDisabled={busy}
+          initialFocus="textarea"
         >
           <form
             className="capture-form"
@@ -197,6 +285,12 @@ export default function Review({
               void reviewBatch();
             }}
           >
+            {batchError && (
+              <div className="inline-error" role="alert">
+                {batchError}
+              </div>
+            )}
+            {notice && <p className="review-notice">{notice}</p>}
             <p className="section-caption">
               Review {selected.length} candidates. Acceptance does not verify their truth.
             </p>
@@ -210,8 +304,8 @@ export default function Review({
                 onChange={(e) => setRationale(e.target.value)}
               />
             </label>
-            <button className="button primary" disabled={busy}>
-              Confirm {batch}
+            <button className="button primary" disabled={busy || loading || !selected.length}>
+              {busy ? 'Reviewing…' : batchError ? 'Retry remaining' : `Confirm ${batch}`}
             </button>
           </form>
         </Modal>

@@ -1,13 +1,11 @@
 import { ArrowLeft, ArrowUpRight, Network, Tags } from 'lucide-react';
-import type { Detail, Source } from '../shared/contracts';
+import type { Detail } from '../shared/contracts';
 import { api, date, pretty } from './api';
 import { useResource } from './hooks';
 import { Badge, Loading } from './components';
+import DocumentContent from './DocumentContent';
+import SourceContent, { type SourceSnapshot } from './SourceContent';
 export type LibrarySelection = { id: string; type: 'knowledge' | 'source' };
-type SourceSnapshot = Source & {
-  revisions: { id: string; text: string; observed_at: string }[];
-  passages: { id: string; anchor: string; text: string }[];
-};
 type Result = { type: 'knowledge'; item: Detail } | { type: 'source'; item: SourceSnapshot };
 export default function LibraryReader({
   selected,
@@ -102,10 +100,11 @@ export default function LibraryReader({
             ))}
           </div>
           <div className="reader-text">
-            {data.type === 'knowledge'
-              ? data.item.statement
-              : data.item.revisions[0]?.text ||
-                'No readable text was exported. The retained original is available in source detail.'}
+            {data.type === 'knowledge' ? (
+              <DocumentContent text={data.item.statement} />
+            ) : (
+              <SourceContent source={data.item} />
+            )}
           </div>
           <section className="reader-evidence">
             <h3>Evidence &amp; quality</h3>

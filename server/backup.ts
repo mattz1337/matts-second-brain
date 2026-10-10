@@ -49,13 +49,13 @@ export async function restoreBundle(service: BrainService, actor: Actor, file: s
         ),
       400,
       'invalid_backup',
-      'Choose a Commonplace ZIP backup containing brain.json and attachments.',
+      'Choose an Orbit ZIP backup containing brain.json and attachments.',
     );
     const manifest = JSON.parse(
       (await archive.read('brain.json', 64 * 1024 * 1024)).toString('utf8'),
     );
     requireCondition(
-      manifest?.format === 'commonplace-export' &&
+      ['orbit-export', 'commonplace-export'].includes(manifest?.format) &&
         manifest.data &&
         [1, 2].includes(manifest.version),
       400,

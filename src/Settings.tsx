@@ -39,7 +39,7 @@ export default function Settings({ onChanged }: { onChanged: () => void }) {
   const snippet = JSON.stringify(
     {
       mcpServers: {
-        commonplace: {
+        orbit: {
           url: integrations.data?.endpoint,
           headers: { Authorization: `Bearer ${show ? token : 'YOUR_ACCESS_TOKEN'}` },
         },
@@ -131,7 +131,9 @@ export default function Settings({ onChanged }: { onChanged: () => void }) {
             <h2>Connect through MCP</h2>
             <p>Search your knowledge and contribute from an assistant or another app.</p>
           </div>
-          <Badge tone="green">Local access</Badge>
+          <Badge tone="green">
+            {integrations.data?.endpoint.startsWith('https:') ? 'Protected access' : 'Local access'}
+          </Badge>
         </div>
         {integrations.loading && !integrations.data ? (
           <Loading />
@@ -192,7 +194,7 @@ export default function Settings({ onChanged }: { onChanged: () => void }) {
                       JSON.stringify(
                         {
                           mcpServers: {
-                            commonplace: {
+                            orbit: {
                               url: integrations.data!.endpoint,
                               headers: { Authorization: `Bearer ${token}` },
                             },
@@ -321,8 +323,8 @@ export default function Settings({ onChanged }: { onChanged: () => void }) {
         </div>
         {restoreMessage && <p role="status">{restoreMessage}</p>}
         <p className="local-note">
-          This spike runs on loopback only. Remote publishing and OAuth authorization are not
-          configured. Export files contain private knowledge; store them accordingly.
+          {integrations.data?.profile || 'Single-owner workspace.'} Export files contain private
+          knowledge; store them accordingly.
         </p>
       </section>
     </>

@@ -14,7 +14,7 @@ export default function CategoryEditor({
   onChanged: () => void;
 }) {
   const [revision, setRevision] = useState(0);
-  const { data, error, loading } = useResource(
+  const { data, error, loading, retry } = useResource(
     () => api<ItemCategories>(`/categories/items/${id}`),
     [id, revision],
     3000,
@@ -66,6 +66,11 @@ export default function CategoryEditor({
       {(error || actionError || data?.error) && (
         <div className="inline-error" role="alert">
           {error || actionError || data?.error}
+          {error && (
+            <button className="button small" onClick={retry}>
+              Try again
+            </button>
+          )}
         </div>
       )}
       {loading && !data ? (
@@ -75,9 +80,10 @@ export default function CategoryEditor({
           <div className="category-editor">
             <h3>{data.title}</h3>
             <p className="section-caption">
-              Suggestions use meaning, tags and notebook context. Confidence describes model
-              similarity and separation, not a probability. Your confirmations and dismissals
-              survive rescans and edits.
+              Categories describe subjects. Imported notebooks remain source information and provide
+              context through their titles and independently categorized notes. Suggestions use
+              meaning and tags. Confidence describes model similarity and separation, not a
+              probability. Your confirmations and dismissals survive rescans and edits.
             </p>
             {data.semantic_state === 'pending' && (
               <p role="status">
@@ -100,7 +106,9 @@ export default function CategoryEditor({
                       {item.method === 'manual'
                         ? 'Confirmed'
                         : item.method === 'semantic'
-                          ? 'Suggested'
+                          ? item.level === 'broad'
+                            ? 'Broad suggestion'
+                            : 'Suggested'
                           : item.method === 'fallback'
                             ? 'Needs a category'
                             : 'From metadata / fallback'}

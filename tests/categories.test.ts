@@ -107,7 +107,7 @@ describe('automatic category hierarchy', () => {
         .count,
     ).toBeGreaterThan(technology.count);
   });
-  it('preserves native stack/notebook hierarchy for NSX imports and categorizes retained originals', async () => {
+  it('preserves NSX notebook provenance without turning import folders into categories', async () => {
     const fixture = await nsxFixture();
     const upload = await service.upload(owner, fixture, 'categories.nsx', 'application/zip');
     const job = await service.importSource(owner, {
@@ -119,13 +119,80 @@ describe('automatic category hierarchy', () => {
     await service.processNextJob();
     expect((await service.getJob(owner, job.id)).status).toBe('completed');
     const categories = await service.classification.list();
-    const notebook = categories.find((category) => category.label === 'Labor')!;
-    expect(notebook.count).toBeGreaterThan(0);
-    expect(categories.some((category) => category.id === notebook.parent_id)).toBe(true);
-    const graph = await service.graph(owner, { category_id: notebook.id });
+    expect(categories.some((category) => ['Notebooks', 'Labor'].includes(category.label))).toBe(
+      false,
+    );
+    const source = (await service.sources(owner)).find((source) => source.title === 'Versuch α')!;
+    expect((await service.sourceDetail(owner, source.id)).metadata).toMatchObject({
+      notebook: 'Labor',
+      stack: 'Research',
+    });
+    const graph = await service.graph(owner, { project: 'Labor' });
     expect(graph.nodes.some((node) => node.type === 'source')).toBe(true);
     expect(graph.edges.some((edge) => edge.type === 'category_parent')).toBe(true);
     expect((await service.classification.status()).pending).toBe(0);
+  });
+  it('retires legacy import branches on startup, rescan and restore while preserving custom owner decisions', async () => {
+    const item = await service.addKnowledge(owner, note());
+    await service.classification.decide(owner, item.id, {
+      action: 'accept',
+      path: ['Notebooks', 'My actual topic'],
+      expected_version: 0,
+    });
+    const root: string = randomUUID(),
+      folder: string = randomUUID();
+    await db.query(
+      "INSERT INTO nodes(id,type,label) VALUES($1,'category','Notebooks'),($2,'category','Old notebook')",
+      [root, folder],
+    );
+    await db.query(
+      "INSERT INTO entities(id,canonical,type) VALUES($1,'collections:[\"notebooks\"]','category'),($2,'collections:[\"notebooks\",\"old notebook\"]','category')",
+      [root, folder],
+    );
+    await db.query(
+      "INSERT INTO relations(id,source_node,target_node,type) VALUES($1,$2,$3,'category_parent'),($4,$5,$2,'categorized_as')",
+      [randomUUID(), folder, root, randomUUID(), item.id],
+    );
+    await db.query(
+      "INSERT INTO category_decisions(node_id,category_id,decision,actor) VALUES($1,$2,'accept','owner')",
+      [item.id, folder],
+    );
+    const legacy = await service.exportData(owner);
+    await service.classification.ensureBackfill();
+    await service.classification.queue();
+    await service.processNextJob();
+    const assertMigrated = async (brain: BrainService) => {
+      const detail = await brain.classification.detail(item.id);
+      expect(
+        detail.assigned.some(
+          (entry) =>
+            entry.path.join('/') === 'Notebooks/My actual topic' && entry.method === 'manual',
+        ),
+      ).toBe(true);
+      expect(detail.assigned.some((entry) => entry.category_id === folder)).toBe(false);
+      expect(detail.decisions.some((entry) => entry.category_id === folder)).toBe(false);
+      expect(
+        (await brain.graph(owner, {})).nodes.some((node) => [root, folder].includes(node.id)),
+      ).toBe(false);
+      expect((await brain.entities(owner)).some((node) => [root, folder].includes(node.id))).toBe(
+        false,
+      );
+      const backup = await brain.exportData(owner);
+      expect(
+        backup.data!.category_decisions!.some(
+          (raw) => (raw as { category_id: string }).category_id === folder,
+        ),
+      ).toBe(true);
+    };
+    await assertMigrated(service);
+    const other = await openDatabase();
+    try {
+      const restored = new BrainService(other);
+      await restored.restoreData(owner, legacy);
+      await assertMigrated(restored);
+    } finally {
+      await other.close();
+    }
   });
   it('backfills legacy data, deduplicates jobs, recovers interruptions and preserves verification/history', async () => {
     const item = await service.addKnowledge(owner, note());

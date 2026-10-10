@@ -43,6 +43,229 @@ afterEach(async () => {
 });
 
 describe('semantic suggestions and persistent owner corrections', () => {
+  const tiedModel = (otherBranch = false): CategoryEmbedder => ({
+    state: 'ready',
+    modelId: 'tied-fixture',
+    async initialize() {},
+    async embed(text) {
+      const at = (similarity: number, direction = 1) => [
+        similarity,
+        direction * Math.sqrt(1 - similarity ** 2),
+        0,
+      ];
+      if (text.startsWith('Title:')) return [1, 0, 0];
+      if (text.startsWith('Life / Food & cooking.')) return at(0.84);
+      if (
+        text.startsWith(
+          otherBranch ? 'Technology / Hardware & making.' : 'Life / Health & fitness.',
+        )
+      )
+        return at(0.839, -1);
+      return [-1, 0, 0];
+    },
+  });
+  it('uses a broader parent for close sibling matches, while retaining specific suggestions for review', async () => {
+    service.classification = new CategoryService(db, tiedModel());
+    const item = await service.addKnowledge(
+      owner,
+      input('A meaningful but ambiguous description of daily activities.'),
+    );
+    await service.classification.processPending();
+    const detail = await service.classification.detail(item.id);
+    expect(detail.assigned[0]).toMatchObject({
+      path: ['Life'],
+      level: 'broad',
+      basis: 'broad',
+      status: 'suggested',
+    });
+    expect(detail.suggestions.filter((item) => item.level === 'specific')).toHaveLength(2);
+    await service.classification.decide(owner, item.id, {
+      action: 'dismiss',
+      category_id: detail.assigned[0].category_id,
+      expected_version: 0,
+    });
+    await service.classification.queue();
+    await service.processNextJob();
+    expect(
+      (await service.classification.detail(item.id)).assigned.some(
+        (item) => item.level === 'broad',
+      ),
+    ).toBe(false);
+    expect((await service.getKnowledge(owner, item.id)).verified_at).toBeNull();
+  });
+  it('resolves a close semantic match when explicit notebook keywords corroborate the subject', async () => {
+    const classifier = new SemanticCategories(tiedModel());
+    const result = await classifier.analyze({
+      title: 'Fixture note',
+      text: 'An ambiguous description of daily activities.',
+      tags: [],
+      project: '',
+      metadata: { notebook: 'Cooking' },
+    });
+    expect(result.suggestions[0]).toMatchObject({
+      path: ['Life', 'Food & cooking'],
+      basis: 'corroborated',
+      level: 'specific',
+      auto_applied: true,
+    });
+    expect(result.suggestions.some((item) => item.level === 'broad')).toBe(false);
+  });
+  it('uses separate title evidence only when it agrees with content and vetoes a conflicting broad branch', async () => {
+    const title = 'A descriptive heading about nourishment';
+    const base = tiedModel();
+    const model: CategoryEmbedder = {
+      ...base,
+      async embed(text) {
+        if (text.startsWith('Technology / Hardware & making.')) return [0, 0, 1];
+        if (text.startsWith('Title:') && text.endsWith(`Content: ${title}`)) return [1, 0.5, 0];
+        return base.embed(text);
+      },
+    };
+    const input = {
+      title,
+      text: 'A meaningful but ambiguous description of daily activities.',
+      tags: [],
+      project: '',
+    };
+    const result = await new SemanticCategories(model).analyze(input);
+    expect(result.suggestions.find((item) => item.auto_applied)).toMatchObject({
+      path: ['Life', 'Food & cooking'],
+      basis: 'title_corroborated',
+      level: 'specific',
+    });
+    model.embed = async (text) => {
+      if (
+        text.startsWith('Technology / Hardware & making.') ||
+        (text.startsWith('Title:') && text.endsWith(`Content: ${title}`))
+      )
+        return [0, 0, 1];
+      return base.embed(text);
+    };
+    const conflict = await new SemanticCategories(model).analyze(input);
+    expect(conflict.suggestions.every((item) => !item.auto_applied)).toBe(true);
+  });
+  it('abstains across unrelated branches and for short content without topic signals', async () => {
+    const ambiguous = await new SemanticCategories(tiedModel(true)).analyze({
+      title: 'Fixture note',
+      text: 'A meaningful but ambiguous description of daily activities.',
+      tags: [],
+      project: '',
+    });
+    expect(ambiguous.suggestions.every((item) => !item.auto_applied)).toBe(true);
+    const empty = await new SemanticCategories(tiedModel()).analyze({
+      title: 'Blank reminder',
+      text: 'zxqv 172839',
+      tags: [],
+      project: '',
+    });
+    expect(empty.suggestions.every((item) => !item.auto_applied)).toBe(true);
+  });
+  it('uses descriptive titles for short image notes while keeping the normal semantic threshold', async () => {
+    const base = tiedModel(true);
+    const model = {
+      ...base,
+      async embed(text: string) {
+        if (text.startsWith('Life / Food & cooking.'))
+          return [0.8758, Math.sqrt(1 - 0.8758 ** 2), 0];
+        if (text.startsWith('Technology / Hardware & making.'))
+          return [0.8591, -Math.sqrt(1 - 0.8591 ** 2), 0];
+        return base.embed(text);
+      },
+    };
+    const result = await new SemanticCategories(model).analyze({
+      title: 'besten Lebkuchen nusselt',
+      text: 'IMG_001.jpg',
+      tags: [],
+      project: 'Erstes Notizbuch',
+      metadata: { notebook: 'Erstes Notizbuch' },
+    });
+    expect(result.suggestions[0]).toMatchObject({
+      path: ['Life', 'Food & cooking'],
+      auto_applied: true,
+    });
+    const empty = await new SemanticCategories(model).analyze({
+      title: 'Blank reminder',
+      text: 'zxqv 172839',
+      tags: [],
+      project: '',
+    });
+    expect(empty.suggestions.every((item) => !item.auto_applied)).toBe(true);
+  });
+  it('uses peer context only to corroborate an ambiguous content suggestion', async () => {
+    const input = {
+      title: 'Fixture note',
+      text: 'A meaningful but ambiguous description of daily activities.',
+      tags: [],
+      project: '',
+    };
+    const context = { path: ['Life', 'Food & cooking'], support: 5, peers: 6 };
+    const result = await new SemanticCategories(tiedModel(true)).analyze(input, [], context);
+    expect(result.suggestions.find((item) => item.auto_applied)).toMatchObject({
+      path: context.path,
+      basis: 'notebook_context',
+      confidence: 'medium',
+    });
+    const conflict = await new SemanticCategories(new FixtureModel()).analyze(
+      { ...input, text: 'fixture-metal' },
+      [],
+      context,
+    );
+    expect(conflict.suggestions.find((item) => item.auto_applied)?.path).toEqual([
+      'Technology',
+      'Hardware & making',
+    ]);
+  });
+  it('uses independent peers in homogeneous notebooks, excludes its own vote, and abstains in mixed notebooks', async () => {
+    service.classification = new CategoryService(db, tiedModel(true));
+    const importNote = async (notebook: string, title: string) => {
+      const job = await service.importSource(owner, {
+        title: `${title} ${randomUUID()}`,
+        text: `A meaningful but ambiguous description of daily activities. Fixture ${randomUUID()}`,
+        idempotency_key: randomUUID(),
+      });
+      await service.processNextJob();
+      const id = (await service.getJob(owner, job.id)).result.source_id as string;
+      await db.query('UPDATE sources SET metadata=$2 WHERE id=$1', [
+        id,
+        JSON.stringify({ notebook: 'General', notebook_id: notebook }),
+      ]);
+      await db.transaction((q) => service.classification.classify(q, id, true));
+      return id;
+    };
+    const confirm = async (id: string, path: string[]) =>
+      service.classification.decide(owner, id, { action: 'accept', path, expected_version: 0 });
+    const food = ['Life', 'Food & cooking'];
+    const seeds = [];
+    for (let i = 0; i < 5; i++) {
+      const id = await importNote('homogeneous', 'Fixture note');
+      seeds.push(id);
+      await confirm(id, food);
+    }
+    const target = await importNote('homogeneous', 'Fixture note');
+    for (let i = 0; i < 6; i++) {
+      const id = await importNote('mixed', 'Fixture note');
+      await confirm(id, i < 3 ? food : ['Technology', 'Hardware & making']);
+    }
+    const mixed = await importNote('mixed', 'Fixture note');
+    await service.classification.processPending(100);
+    expect((await service.classification.detail(target)).assigned).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: food, basis: 'notebook_context' })]),
+    );
+    expect(
+      (await service.classification.detail(mixed)).assigned.some(
+        (item) => item.method === 'fallback',
+      ),
+    ).toBe(true);
+    const seed = await service.classification.detail(seeds[0]);
+    expect(seed.suggestions.some((item) => item.basis === 'notebook_context')).toBe(false);
+    await service.classification.queue();
+    await service.processNextJob();
+    expect(
+      (await service.classification.detail(target)).assigned.some(
+        (item) => item.basis === 'notebook_context',
+      ),
+    ).toBe(true);
+  });
   it('runs semantic categorization asynchronously and exposes confidence without verifying the note', async () => {
     const item = await service.addKnowledge(owner, input());
     expect((await service.classification.detail(item.id)).semantic_state).toBe('pending');

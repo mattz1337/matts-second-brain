@@ -61,7 +61,7 @@ export async function fetchPublicPage(
       url,
       {
         headers: {
-          'User-Agent': 'Commonplace-Spike/0.1',
+          'User-Agent': 'Orbit-Spike/0.1',
           Accept: 'text/html,text/plain,application/pdf',
         },
         lookup: (_hostname, _options, callback) => callback(null, address.address, address.family),

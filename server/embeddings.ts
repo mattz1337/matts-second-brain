@@ -39,6 +39,7 @@ export class Embeddings {
         const pipe = await pipeline('feature-extraction', this.model, {
           dtype: 'q8',
           device: 'cpu',
+          session_options: { intraOpNumThreads: config.embeddingThreads, interOpNumThreads: 1 },
         });
         this.extractor = pipe as unknown as NonNullable<typeof this.extractor>;
         this.state = 'ready';

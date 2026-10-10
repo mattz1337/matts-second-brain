@@ -257,7 +257,7 @@ test('overview, graph exploration, settings, and responsive layout', async ({ pa
     return { label: label.textContent!, x: rect.left + rect.width / 2, y: rect.top - 13 };
   });
   await page.mouse.click(light.x, light.y);
-  await expect(stage.locator('.globe-selection h3')).toHaveText(light.label);
+  await expect(page.locator('.graph-reading-panel h3').first()).toHaveText(light.label);
   const claim = await page
     .getByLabel('Find a graph node')
     .locator('option')
@@ -361,6 +361,14 @@ test('Note Station archive preview, notebook selection, retained dates, attachme
   });
   await page.getByRole('button', { name: 'Preview archive', exact: true }).click();
   await expect(page.getByText('2 notes', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Clear selection', exact: true }).click();
+  await expect(
+    page.getByText('Select at least one notebook to import.', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Import selected notebooks', exact: true }),
+  ).toBeDisabled();
+  await page.getByRole('button', { name: 'Select all', exact: true }).click();
   await expect(
     page.getByRole('checkbox', { name: 'Extract claim candidates for review' }),
   ).not.toBeChecked();
@@ -387,9 +395,12 @@ test('Note Station archive preview, notebook selection, retained dates, attachme
   const categoryEditor = page.getByRole('dialog', { name: 'Organize categories' });
   await expect(
     categoryEditor.getByText('Notebooks / Research / Labor', { exact: true }),
+  ).not.toBeVisible();
+  await expect(
+    categoryEditor.getByText('Categories describe subjects.', { exact: false }),
   ).toBeVisible();
   await categoryEditor.getByRole('button', { name: 'Close dialog', exact: true }).click();
-  await page.getByRole('button', { name: /Versuch α/ }).click();
+  await expect(dialog.getByRole('heading', { name: 'Versuch α', exact: true })).toBeVisible();
   await page.screenshot({ path: path.resolve('.data/screenshots/nsx-source.png'), fullPage: true });
   await dialog.getByRole('button', { name: 'Close dialog' }).click();
   await page.getByRole('button', { name: 'Knowledge library', exact: true }).click();

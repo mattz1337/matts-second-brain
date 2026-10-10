@@ -1,4 +1,4 @@
-# Commonplace — Matt's Second Brain
+# Orbit — Matt's Second Brain
 
 A working personal knowledge spike: capture notes, import documents, inspect cited claims, review evidence, search by meaning, and explore the knowledge graph. A private web app and MCP share the same persistent application services.
 
@@ -28,7 +28,15 @@ Open [the built app](http://127.0.0.1:4310). Stop with Ctrl+C. Only one API proc
 
 ## What works
 
+For a password-protected installation on a DS423+ with Container Manager, see the [Synology deployment guide](docs/synology.md). It covers the amd64 image, persistent storage, HTTPS reverse proxy, owner login, migration, and database inspection.
+
+To inspect PGlite, use **Settings → Export backup** while running, or stop the API and run `npm.cmd run db:inspect -- --stopped`. SQL inspection queries a separate copy of the database; see [database inspection instructions](docs/synology.md#database-inspection) for custom queries and NAS commands. PGlite has no PostgreSQL TCP endpoint in this application.
+
+Orbit was previously named Commonplace. Existing JSON/ZIP backups remain supported, and saved appearance preferences carry over. New downloads and Docker images use the Orbit name.
+
 The web app uses an Apple-inspired interface with Liquid Glass navigation and globe controls, solid reading surfaces, and a library list beside an inline reader. Choose **System**, **Light**, or **Dark** in Settings → **Appearance**, or use the toolbar appearance button. Preferences are saved in this browser. **Reduce transparency** switches glass to solid surfaces; device preferences for reduced motion and reduced transparency are also respected. On mobile, selecting a library item opens the reader with a **Back to collection** action.
+
+Main flows include guarded drafts and a keyboard save shortcut, URL-restored searches/filters, import progress with next steps, searchable source pages, category review that returns to the item, and retryable batch review. See the [UX audit and implementation notes](docs/ux-audit.md).
 
 - Capture observations, preferences, hypotheses, inferences, and factual claims with topics, project context, optional structured triples, validity dates, and review intervals.
 - Import pasted text, UTF-8 Markdown/text, HTML, text PDFs, and public web pages. Retain originals, exact passage anchors, hashes, and source revisions.
@@ -37,7 +45,7 @@ The web app uses an Apple-inspired interface with Liquid Glass navigation and gl
 - Review candidates individually or in batches. Acceptance and substantive verification remain separate. Evidence support/challenge, independent source lineages, stale verification, conflicts, and supersession are visible.
 - Search PostgreSQL full-text and real pgvector embeddings, fuse ranks, and optionally expand explicit graph connections. English and German paraphrase checks use the actual local model.
 - Ask for a cited evidence digest; insufficient relevant knowledge is reported as a gap.
-- Animated Three.js knowledge globe with glowing nodes, flowing connection arcs, drag/zoom, smooth node flights, motion controls, topic filters, and an accessible list view. Merge duplicate named entities and undo merges.
+- Animated Three.js knowledge globe with glowing nodes, flowing connection arcs, drag/zoom, smooth node flights, motion controls, topic filters, and an accessible list view. Selecting a note or source opens a reading preview beside the graph. **Fullscreen** expands the graph and preview; Escape returns to the page. Merge duplicate named entities and undo merges.
 - Versioned edits and review history, archival/restoration, item/source deletion, portable export, and empty-workspace restore with search-index rebuilding.
 - Fourteen typed MCP tools over stateless Streamable HTTP, plus a stdio bridge. Read-only and contribution tokens are separate; assistants cannot review/verify or physically delete data.
 - Responsive web app with capture, library, sources, graph, review, and integration settings.
@@ -50,7 +58,7 @@ Claim extraction is optional and off by default. Enable it to propose cited cand
 
 The knowledge library's default **All** view includes imported originals alongside accepted knowledge. **Imported notes** browses Note Station notes with paging and full-text search. **Accepted** lists curated knowledge items. Original sources appear in the globe even when no claims have been accepted; use notebook/project filters or a source's **Show connections** action to explore a large collection. The overview's accepted-knowledge count remains separate from the source count.
 
-Available attachments are stored locally, with image thumbnails and authenticated downloads in the source detail view. The exact original note JSON—including native HTML and other exported fields—can also be downloaded. The reader displays safe text; complex rich-text layouts are retained in the original JSON rather than reproduced exactly. Attachment contents are not automatically parsed or OCR'd. Missing files, encrypted content, and empty/malformed notes are explicitly reported.
+Available attachments are stored locally, with images and authenticated downloads in the reader. HTML and Note Station originals display as continuous documents with retained headings, lists, emphasis, tables, and safe links. Common Markdown formatting also works in knowledge notes and text sources. **Citation passages** exposes the indexed passages separately; **Source details & original** contains the hash and original note JSON download. Imported scripts, styles, and remote images are omitted; complex layouts remain available in the retained original rather than reproduced exactly. Attachment contents are not automatically parsed or OCR'd. Missing files, encrypted content, and empty/malformed notes are explicitly reported.
 
 The importer supports JSON-format NSX exports, archives up to 512 MB, 10,000 notes, 500,000 readable characters per note, and individual attachments up to 64 MB. It reads ZIP entries without extracting arbitrary paths or buffering the whole archive. Each note commits independently; interrupted batches can be retried. Completed bulk uploads are removed after individual note records and media are retained. Personal `.nsx` exports and `.data/` are ignored by Git.
 
@@ -67,11 +75,15 @@ The validation command writes to a new ignored `.data/nsx-validation-*` director
 
 ## Categories and rescanning
 
-The graph includes real category nodes: notes/sources/claims → **categorized as** → a narrower category → **category parent** → a broader category. New captures, imports (including NSX originals), and edits retain organizational metadata immediately and queue semantic categorization. The same local multilingual E5 model used for search compares note content, title, tags, and notebook/stack context with bilingual category descriptions. The initial catalog has 24 subject branches and includes up to 100 user-defined category leaves. Hierarchical tags such as `Personal / Learning` supply explicit branches. Note Station stack → notebook organization remains a separate Notebooks tree. Categories organize content; they do not accept claims or verify facts.
+The graph includes real category nodes: notes/sources/claims → **categorized as** → a narrower category → **category parent** → a broader category. New captures, imports (including NSX originals), and edits retain organizational metadata immediately and queue semantic categorization. The same local multilingual E5 model used for search compares note content, title, tags, and notebook/stack context with bilingual category descriptions. The initial catalog has 24 subject branches and includes up to 100 user-defined category leaves. Hierarchical tags such as `Personal / Learning` supply explicit branches. Imported Note Station notebooks and stacks remain source metadata and filters, rather than categories. Their titles can inform subject matching. Independently confirmed or high-confidence subjects of other notes in the same notebook can corroborate a close content match when at least five peers agree, represent at least half the notebook's peers, and account for at least 80% of its single-subject votes. Mixed notebooks abstain; context-derived assignments cannot become votes themselves. Categories organize content; they do not accept claims or verify facts.
+
+Descriptive titles also supply meaningful input for notes with very little body text, such as saved recipe pictures. Engine updates automatically rescan existing items; **Rescan categories** reruns this explicitly. Legacy generated notebook branches are retired during startup, rescans, and backup restore. Notebook provenance and custom topic corrections survive; historical decisions about the retired import folders remain in backups.
 
 Open **Knowledge graph** to browse category parents and children with descendant counts. Selecting a branch filters to its descendants. The globe groups items near category hubs and keeps parents in bounded samples. **Organize categories**, available from notes, source details, and globe selections, shows assigned categories and other suggestions with confidence, similarity, and separation from alternatives. Confirm a suggestion, dismiss a category, add a custom path, or undo a correction. Confirmations and dismissals are stored independently from generated assignments and survive edits, rescans, and backups; ordinary assistants cannot override them.
 
-Up to three semantic suggestions are retained. Strong enough matches appear as **Suggested** graph memberships; ambiguous matches stay available for review while the item remains **Uncategorized**. Confidence is a similarity/margin heuristic, not a calibrated probability. The minimum suggestion score defaults to 0.78; automatic membership requires at least 0.82 plus separation of 0.008 from the runner-up (or a very strong score of 0.88). Secondary automatic suggestions require 0.86. These thresholds passed a small bilingual fixture check, not a representative corpus accuracy benchmark. E5 classification inputs use the `query:` prefix. [E5 model card](https://huggingface.co/intfloat/multilingual-e5-small).
+Up to three specific semantic suggestions are retained. Strong enough matches appear as **Suggested** graph memberships. When keywords in content, titles, tags or notebook/stack names corroborate a semantic suggestion, that shared signal can resolve a close score. For ambiguous items with descriptive titles, a separate title/tag comparison can corroborate an existing content suggestion; disagreement prevents a conflicting broad assignment. If two close suggestions share a parent that is clearly separated from competing branches, Orbit adds a **Broad suggestion**, such as Technology, while keeping the specific choices available for review. Cross-branch ambiguity stays **Uncategorized**. Sparse notes without topic signals do not receive a broad assignment.
+
+Confidence is a similarity/margin heuristic, not a calibrated probability. The minimum suggestion score defaults to 0.78; ordinary automatic membership requires at least 0.82 plus separation of 0.008 from the runner-up (or a very strong score of 0.88). Secondary automatic suggestions require 0.86. Keyword corroboration can assign a retained suggestion above the minimum floor. Broad assignment requires a top score of at least 0.82, sibling separation below 0.008, and separation of at least 0.008 from every other branch. These thresholds passed small bilingual fixtures, not a representative accuracy benchmark. E5 classification inputs use the `query:` prefix. [E5 model card](https://huggingface.co/intfloat/multilingual-e5-small).
 
 Long notes use at most eight distributed windows, retaining title/tags/folder context in each window; this samples rather than exhaustively classifies the entire note. Keyword categories are a provisional fallback while inference is pending or when `EMBEDDINGS=lexical`. Disabled/loading/failed models, pending work, and per-item errors are visible. Inference runs outside database transactions, rejects results after concurrent edits, and serializes access to the local model with search indexing.
 
@@ -84,9 +96,15 @@ Copy `.env.example` to `.env` if you want to change defaults. Credentials and kn
 | Setting                    | Default                        | Purpose                                                                                    |
 | -------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------ |
 | `PORT`                     | `4310`                         | Local API / built web app port; Vite's development proxy expects this default              |
+| `HOST`                     | `127.0.0.1`                    | Listening address; the container uses `0.0.0.0` with password mode                         |
+| `ACCESS_MODE`              | `local`                        | `local` for loopback-only desktop use; `password` for NAS/server access                    |
+| `APP_ORIGIN`               | unset                          | Exact HTTPS origin required in password mode, also used for the advertised MCP URL         |
+| `OWNER_PASSWORD_HASH_FILE` | unset                          | Mounted scrypt hash generated with `npm run auth:password`; required in password mode      |
+| `TRUST_PROXY`              | unset                          | Optional comma-separated trusted proxy IPs/CIDRs; forwarded headers ignored by default     |
 | `DATA_DIR`                 | `.data`                        | Persistent PostgreSQL data, attachments, temporary uploads, credentials, and cached models |
 | `SEED_DEMO`                | `true`                         | Add starter notes only to an empty, unseeded workspace                                     |
 | `EMBEDDINGS`               | `local`                        | Local transformer inference; use `lexical` to disable semantic inference                   |
+| `EMBEDDING_THREADS`        | `2`                            | CPU inference threads, bounded to 1–8                                                      |
 | `EMBEDDING_MODEL`          | `Xenova/multilingual-e5-small` | 384-dimensional ONNX model; other models must have 384 dimensions                          |
 | `SEMANTIC_MIN_SCORE`       | `0.8`                          | Similarity cutoff, calibrated only on small spike fixtures; this is not a truth score      |
 | `CATEGORY_MIN_SIMILARITY`  | `0.78`                         | Minimum semantic category suggestion score                                                 |
@@ -108,7 +126,7 @@ For stdio, start the API first, then run `npm.cmd run mcp`. The bridge uses the 
 ```json
 {
   "mcpServers": {
-    "commonplace": {
+    "orbit": {
       "command": "node",
       "args": [
         "C:/src/matts-second-brain/node_modules/tsx/dist/cli.mjs",
@@ -139,10 +157,11 @@ npm.cmd run test:e2e
 - `npm run test:categories:semantic` checks actual English/German semantic category rankings and abstention on ambiguous text. Integration checks cover correction persistence, backup restore, inference races and model errors.
 - Playwright builds the app and tests capture/edit/archive/forget, import/review/verify/citation, Note Station previews/notebook selection/attachment downloads/backups, graph/list/settings, and a mobile viewport. It uses installed Chrome on this Windows machine; on another host first run `npx playwright install chromium`.
 - Browser screenshots are written to `.data/screenshots/`; traces from failures stay in `test-results/`.
+- NAS access tests cover password login, session expiry/revocation, rate limits, Host/Origin validation, and read-only database inspection. The browser HTTPS fixture needs OpenSSL on PATH or Git for Windows' bundled copy. After building the Docker image, `npm.cmd run test:container -- --with-model` verifies the Linux runtime and offline inference using an isolated synthetic volume and the public `.data/models/` cache.
 
 ## Architecture
 
-Commonplace is a local TypeScript application with one API process owning an embedded PostgreSQL database. The browser and MCP clients use the same application services, authorization rules, and stored records. The graph is stored as explicit nodes and typed relationships; vectors provide semantic retrieval and category suggestions alongside that graph.
+Orbit is a local TypeScript application with one API process owning an embedded PostgreSQL database. The browser and MCP clients use the same application services, authorization rules, and stored records. The graph is stored as explicit nodes and typed relationships; vectors provide semantic retrieval and category suggestions alongside that graph.
 
 ### Runtime and component boundaries
 
@@ -155,7 +174,7 @@ flowchart TB
   subgraph API["Local API process · 127.0.0.1:4310"]
     REST["Express REST routes<br/>/api/*"]
     MCP["MCP Streamable HTTP<br/>/mcp"]
-    Auth["Local session / bearer tokens<br/>Actor and scope checks"]
+    Auth["Owner session / scoped MCP tokens<br/>Actor and scope checks"]
     Service["BrainService + CategoryService<br/>Knowledge, evidence, graph, review"]
     Worker["Background work loop<br/>Imports, indexing, categorization"]
     Model["Transformers.js<br/>Local multilingual E5 inference"]
@@ -258,13 +277,13 @@ The API process runs a background loop every second for import jobs, pending sea
 
 Under the configured `DATA_DIR`, `postgres/` holds the persistent PGlite database, `files/` holds disk-backed uploads and content-addressed attachments, `models/` caches downloaded model weights, and `credentials.json` holds local credentials. Appearance preferences stay in browser `localStorage`. Portable ZIP backups contain a database-record manifest and attachments; restore targets an empty workspace and rebuilds derived indexes. One API process must own a given data directory.
 
-The browser obtains an HttpOnly, SameSite session cookie for the local owner. MCP uses separate read-only and read/contribute bearer tokens. Scope checks are enforced in application services as well as relevant routes: ordinary assistant tokens can propose knowledge but cannot verify claims, override owner category decisions, or physically delete data. Local Host/Origin guards restrict access to the loopback deployment; this is not a multi-user or remote authentication design.
+The browser obtains an HttpOnly, SameSite session cookie for the owner. Desktop local mode stays restricted to loopback. NAS/password mode requires an HTTPS origin and a mounted scrypt password hash, uses Secure cookies with server-side expiry and logout revocation, and rejects unexpected Host/Origin headers. MCP uses separate read-only and read/contribute bearer tokens. Scope checks are enforced in application services as well as relevant routes: ordinary assistant tokens can propose knowledge but cannot verify claims, override owner category decisions, or physically delete data. This is a single-owner application; password mode does not add multi-user isolation or OAuth.
 
 ## Spike limits
 
 React/TypeScript/Vite + Three.js, an Express/TypeScript backend, filesystem-persistent PGlite PostgreSQL with pgvector, Transformers.js local E5 embeddings, and the official TypeScript MCP SDK. This implements the concept's knowledge architecture using the runtime available in the workspace. [PGlite persistence](https://pglite.dev/docs/), [pgvector extension](https://pglite.dev/extensions/), [MCP SDK](https://github.com/modelcontextprotocol/typescript-sdk).
 
-The spike uses one local process with durable database jobs instead of Python/FastAPI, Celery/Redis, and a separate PostgreSQL service. This is a single-owner local application. It binds to loopback, rejects hostile Host/Origin headers, and protects MCP with scoped bearer tokens. It has no remote OAuth deployment, multi-user isolation, or high availability.
+The spike uses one application process with durable database jobs instead of Python/FastAPI, Celery/Redis, and a separate PostgreSQL service. Desktop mode binds to loopback; the optional NAS deployment adds password access behind an HTTPS reverse proxy. Both modes reject hostile Host/Origin headers and protect MCP with scoped bearer tokens. There is no OAuth deployment, multi-user isolation, or high availability.
 
 Default extraction proposes exact source sentences, and ask mode returns an evidence digest. Optional Ollama extraction validates schema and cited quotes but still needs human review; that optional provider is not part of the automated live-model verification. Scanned PDF OCR, complex-table fidelity, free-form answer generation, connector sync, automated revalidation, background backup management, and the PRD's large-corpus performance/quality gates remain follow-up work.
 
@@ -275,3 +294,4 @@ Restore imports a JSON archive into an empty workspace and replays tombstones pr
 - [Concept and original technology proposal](docs/concept.md)
 - [Draft PRD](docs/prd.md)
 - [Spike implementation, validation, and next decisions](docs/spike.md)
+- [Synology DS423+ installation, migration, and database inspection](docs/synology.md)

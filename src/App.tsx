@@ -21,9 +21,10 @@ import {
   X,
   Moon,
   Sun,
+  LogOut,
 } from 'lucide-react';
 import { useAppearance } from './Appearance';
-import { api, date } from './api';
+import { api, date, resetApiSession } from './api';
 import { useResource } from './hooks';
 import { SectionHeading, KnowledgeCard, Loading, Empty, LinkAction } from './components';
 import type {
@@ -44,6 +45,8 @@ import Sources, { SourceDetail } from './Sources';
 import Review from './Review';
 import Settings from './Settings';
 import EntityDetail from './Entity';
+import Login from './Login';
+import { updateLocation, useUrlState } from './navigation';
 
 type View = 'overview' | 'library' | 'graph' | 'sources' | 'review' | 'settings';
 const navigation: { id: View; label: string; icon: typeof BookOpen }[] = [
@@ -65,31 +68,84 @@ function Logo() {
 }
 export default function App() {
   const appearance = useAppearance();
-  const initial = new URLSearchParams(window.location.search).get('view') as View;
-  const [view, setView] = useState<View>(
-    ['overview', 'library', 'graph', 'sources', 'review', 'settings'].includes(initial)
-      ? initial
-      : 'overview',
-  );
+  const [view] = useUrlState<View>('view', 'overview', [
+    'overview',
+    'library',
+    'graph',
+    'sources',
+    'review',
+    'settings',
+  ]);
   const [ready, setReady] = useState(false);
+  const [needsLogin, setNeedsLogin] = useState(false);
+  const [passwordMode, setPasswordMode] = useState(false);
   const [fatal, setFatal] = useState('');
   const [revision, setRevision] = useState(0);
   const [capture, setCapture] = useState<'note' | 'source' | null>(null);
   const [detail, setDetail] = useState<string | null>(null);
   const [source, setSource] = useState<string | null>(null);
   const [categoryItem, setCategoryItem] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
-  const [headerQuery, setHeaderQuery] = useState('');
+  const [categoryReturn, setCategoryReturn] = useState<{
+    id: string;
+    type: 'knowledge' | 'source';
+  } | null>(null);
+  const [query, setQuery] = useUrlState('q', '');
+  const [headerQuery, setHeaderQuery] = useState(query);
+  const [latestImport, setLatestImport] = useState<string>();
   const [focus, setFocus] = useState<string | undefined>();
   const [toast, setToast] = useState('');
+  const [savedItem, setSavedItem] = useState<string | null>(null);
   const [mobile, setMobile] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const [entity, setEntity] = useState<string | null>(null);
+  useEffect(() => setHeaderQuery(query), [query]);
   useEffect(() => {
-    api('/session', {})
-      .then(() => setReady(true))
+    let alive = true;
+    api<{ authenticated: boolean; mode: 'local' | 'password' }>('/session')
+      .then(async (session) => {
+        if (!alive) return;
+        setPasswordMode(session.mode === 'password');
+        if (session.authenticated) setReady(true);
+        else if (session.mode === 'password') setNeedsLogin(true);
+        else {
+          await api('/session', {});
+          if (alive) setReady(true);
+        }
+      })
       .catch((e) => setFatal(e.message));
+    return () => {
+      alive = false;
+    };
   }, []);
+  function signedOut() {
+    resetApiSession();
+    setReady(false);
+    setNeedsLogin(true);
+    setCapture(null);
+    setDetail(null);
+    setSource(null);
+    setCategoryItem(null);
+    setCategoryReturn(null);
+    setEntity(null);
+    setToast('');
+    setSavedItem(null);
+    setMobile(false);
+  }
+  useEffect(() => {
+    const expired = () => {
+      if (passwordMode) signedOut();
+    };
+    window.addEventListener('orbit:unauthorized', expired);
+    return () => window.removeEventListener('orbit:unauthorized', expired);
+  }, [passwordMode]);
+  async function logout() {
+    try {
+      await api('/session', undefined, 'DELETE');
+      signedOut();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : 'Could not sign out.');
+    }
+  }
   const dashboard = useResource(
     () => (ready ? api<Dashboard>('/dashboard') : Promise.resolve(null)),
     [ready, revision],
@@ -113,11 +169,13 @@ export default function App() {
   );
   useEffect(() => {
     if (!toast) return;
-    const timer = setTimeout(() => setToast(''), 4500);
+    const timer = setTimeout(() => setToast(''), savedItem ? 8000 : 4500);
     return () => clearTimeout(timer);
-  }, [toast]);
+  }, [toast, savedItem]);
   useEffect(() => {
     const listener = (e: KeyboardEvent) => {
+      if (!ready) return;
+      if (document.querySelector('[role="dialog"]')) return;
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         searchRef.current?.focus();
@@ -138,34 +196,54 @@ export default function App() {
     };
     window.addEventListener('keydown', listener);
     return () => window.removeEventListener('keydown', listener);
-  }, [capture, detail, source, categoryItem]);
-  useEffect(() => {
-    const listener = () => {
-      const next = new URLSearchParams(window.location.search).get('view') as View;
-      if (['overview', 'library', 'graph', 'sources', 'review', 'settings'].includes(next))
-        setView(next);
-    };
-    window.addEventListener('popstate', listener);
-    return () => window.removeEventListener('popstate', listener);
-  }, []);
+  }, [capture, detail, source, categoryItem, ready]);
   function navigate(next: View) {
-    setView(next);
     setMobile(false);
-    window.history.pushState({}, '', `?view=${next}`);
+    updateLocation({ view: next }, true);
   }
   function changed() {
     setRevision((x) => x + 1);
   }
-  function saved(item?: Knowledge) {
+  function saved(item?: Knowledge, jobId?: string) {
     setCapture(null);
     changed();
+    setSavedItem(item?.id || null);
     setToast(item ? 'Knowledge saved.' : 'Source queued. Follow its progress in Sources.');
-    if (!item) navigate('sources');
+    if (!item) {
+      setLatestImport(jobId);
+      navigate('sources');
+    }
   }
   function search(e: FormEvent) {
     e.preventDefault();
-    setQuery(headerQuery);
-    navigate('library');
+    updateLocation(
+      {
+        view: 'library',
+        q: headerQuery.trim(),
+        library_topic: null,
+        library_project: null,
+        library_status: null,
+        library_kind: null,
+        library_temporal: null,
+        library_asof: null,
+        library_recorded: null,
+        library_fresh: null,
+      },
+      true,
+    );
+    setMobile(false);
+  }
+  function organize(id: string, returnTo?: 'knowledge' | 'source') {
+    setCategoryReturn(returnTo ? { id, type: returnTo } : null);
+    setDetail(null);
+    setSource(null);
+    setCategoryItem(id);
+  }
+  function closeCategories() {
+    setCategoryItem(null);
+    if (categoryReturn?.type === 'source') setSource(categoryReturn.id);
+    if (categoryReturn?.type === 'knowledge') setDetail(categoryReturn.id);
+    setCategoryReturn(null);
   }
   function openGraph(id?: string) {
     setFocus(id);
@@ -178,6 +256,17 @@ export default function App() {
     else openGraph(id);
   }
   const d = dashboard.data;
+  if (needsLogin)
+    return (
+      <Login
+        onSuccess={() => {
+          resetApiSession();
+          setNeedsLogin(false);
+          setReady(true);
+          setFatal('');
+        }}
+      />
+    );
   return (
     <div className="app-shell">
       {mobile && (
@@ -199,7 +288,7 @@ export default function App() {
           <span className="brand-mark">
             <Logo />
           </span>
-          <span>Commonplace</span>
+          <span>Orbit</span>
         </a>
         <div className="workspace-label">
           <span className="workspace-avatar">M</span>
@@ -314,6 +403,16 @@ export default function App() {
             <Plus size={16} />
             <span>New note</span>
           </button>
+          {passwordMode && (
+            <button
+              className="icon-button"
+              aria-label="Sign out"
+              title="Sign out"
+              onClick={() => void logout()}
+            >
+              <LogOut size={17} />
+            </button>
+          )}
         </header>
         <main className={`main-content ${view === 'overview' ? 'overview' : ''}`}>
           {fatal ? (
@@ -449,7 +548,12 @@ export default function App() {
                               : 'Keep your knowledge alive.'}
                           </strong>
                           <p>A quick check keeps what you know useful.</p>
-                          <button className="text-button" onClick={() => navigate('review')}>
+                          <button
+                            className="text-button"
+                            onClick={() =>
+                              updateLocation({ view: 'review', review_tab: 'due' }, true)
+                            }
+                          >
                             Visit review queue
                             <ArrowRight size={14} />
                           </button>
@@ -514,7 +618,7 @@ export default function App() {
                   onSource={setSource}
                   dashboard={d}
                   onGraph={openGraph}
-                  onCategorize={setCategoryItem}
+                  onCategorize={organize}
                 />
               )}
               {view === 'graph' && (
@@ -527,7 +631,7 @@ export default function App() {
                   onSelect={openNode}
                   revision={revision}
                   dashboard={d}
-                  onCategorize={setCategoryItem}
+                  onCategorize={organize}
                 />
               )}
               {view === 'sources' && (
@@ -536,6 +640,20 @@ export default function App() {
                   onImport={() => setCapture('source')}
                   onOpen={setSource}
                   onChanged={changed}
+                  latestImport={latestImport}
+                  onBrowseImported={() =>
+                    updateLocation(
+                      {
+                        view: 'library',
+                        q: null,
+                        library_status: 'imported',
+                        library_topic: null,
+                        library_project: null,
+                      },
+                      true,
+                    )
+                  }
+                  onReview={() => updateLocation({ view: 'review', review_tab: null }, true)}
                 />
               )}
               {view === 'review' && (
@@ -569,10 +687,7 @@ export default function App() {
           onClose={() => setDetail(null)}
           onChanged={changed}
           onGraph={openGraph}
-          onCategorize={(id) => {
-            setDetail(null);
-            setCategoryItem(id);
-          }}
+          onCategorize={(id) => organize(id, 'knowledge')}
           onOpenSource={(id) => {
             setDetail(null);
             setSource(id);
@@ -584,10 +699,7 @@ export default function App() {
           id={source}
           onClose={() => setSource(null)}
           onChanged={changed}
-          onCategorize={(id) => {
-            setSource(null);
-            setCategoryItem(id);
-          }}
+          onCategorize={(id) => organize(id, 'source')}
           onGraph={(id) => {
             setSource(null);
             openGraph(id);
@@ -603,16 +715,23 @@ export default function App() {
         />
       )}
       {categoryItem && (
-        <CategoryEditor
-          id={categoryItem}
-          onClose={() => setCategoryItem(null)}
-          onChanged={changed}
-        />
+        <CategoryEditor id={categoryItem} onClose={closeCategories} onChanged={changed} />
       )}
       {toast && (
         <div className="toast" role="status">
           <Check size={17} />
           {toast}
+          {savedItem && toast === 'Knowledge saved.' && (
+            <button
+              className="toast-action"
+              onClick={() => {
+                setDetail(savedItem);
+                setToast('');
+              }}
+            >
+              Open note
+            </button>
+          )}
           <button aria-label="Dismiss notification" onClick={() => setToast('')}>
             <X size={14} />
           </button>
@@ -690,6 +809,14 @@ function GraphView({
     8000,
   );
   const visible = filtered.data || (!category ? data : null);
+  const hasFilters = !!(topic || project || category || focus || candidates);
+  function resetGraph() {
+    setTopic('');
+    setProject('');
+    setCategory('');
+    setCandidates(false);
+    onFocus(undefined);
+  }
   return (
     <>
       <SectionHeading
@@ -702,7 +829,7 @@ function GraphView({
           <strong>Automatic organization</strong>
           <span>
             {categoryStatus.data?.model_state === 'ready'
-              ? `Local semantic model · ${categoryStatus.data.semantic_pending} pending · ${categoryStatus.data.semantic_errors} errors · ${categoryStatus.data.needs_review} need category review`
+              ? `Local semantic model · ${categoryStatus.data.semantic_pending} pending · ${categoryStatus.data.semantic_errors} errors · ${categoryStatus.data.needs_review} need category review · ${categoryStatus.data.broad_assigned || 0} broader subjects`
               : categoryStatus.data?.model_state === 'error'
                 ? `Semantic model failed: ${categoryStatus.data.model_error}`
                 : categoryStatus.data?.model_state === 'disabled'
@@ -722,6 +849,17 @@ function GraphView({
         <button className="button small" disabled={busy} onClick={() => void rescan()}>
           Rescan categories
         </button>
+        {categories.data?.some((item) => item.label === 'Uncategorized') && (
+          <button
+            className="button small"
+            onClick={() => {
+              resetGraph();
+              setCategory(categories.data!.find((item) => item.label === 'Uncategorized')!.id);
+            }}
+          >
+            Review uncategorized
+          </button>
+        )}
       </div>
       <div className="graph-filter-bar">
         <select aria-label="Graph topic" value={topic} onChange={(e) => setTopic(e.target.value)}>
@@ -756,6 +894,11 @@ function GraphView({
             <X size={13} />
           </button>
         )}
+        {hasFilters && (
+          <button className="text-button" onClick={resetGraph}>
+            Reset view
+          </button>
+        )}
         <span>Drag to orbit · Select a light to follow a connection</span>
       </div>
       {(error || filtered.error || scanError || categories.error || categoryStatus.error) && (
@@ -773,12 +916,29 @@ function GraphView({
           }}
         />
         <div className="full-graph globe-view">
-          {loading && !visible ? (
+          {(loading || filtered.loading) && !visible ? (
             <Loading />
+          ) : visible && visible.nodes.length === 0 ? (
+            <Empty
+              title={hasFilters ? 'No connections in this view' : 'Your graph starts with an idea'}
+              description={
+                hasFilters
+                  ? 'Try a different category or notebook, or reset the view to see your collection.'
+                  : 'Capture a note or import a source to start connecting your knowledge.'
+              }
+              action={
+                hasFilters ? (
+                  <button className="button small" onClick={resetGraph}>
+                    Show all connections
+                  </button>
+                ) : undefined
+              }
+            />
           ) : (
             visible && (
               <Graph
                 data={visible}
+                revision={revision}
                 onSelect={(id, type) => {
                   if (type === 'category') {
                     setCategory(id);
@@ -806,8 +966,8 @@ function GraphView({
             branches. Local semantic suggestions use note content, tags and notebook context.
             Confidence is a model estimate; ambiguous suggestions need your review. Open Organize
             categories on a note to confirm, dismiss or add categories. Your corrections survive
-            future rescans. Hierarchical tags and original stack/notebook metadata supply explicit
-            branches.
+            future rescans. Hierarchical tags supply explicit branches. Imported notebooks remain
+            source context rather than subject categories.
           </p>
         </details>
       </div>

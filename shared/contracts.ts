@@ -288,6 +288,8 @@ export interface CategorizationStatus {
   semantic_errors: number;
   suggested: number;
   needs_review: number;
+  broad_assigned: number;
+  corroborated: number;
   model_state: string;
   model_error: string | null;
 }
@@ -302,6 +304,8 @@ export interface ItemCategory {
   auto_applied?: boolean;
   status?: string;
   decision?: 'accept' | 'dismiss';
+  level?: 'specific' | 'broad';
+  basis?: 'semantic' | 'corroborated' | 'title_corroborated' | 'notebook_context' | 'broad';
 }
 export interface ItemCategories {
   node_id: string;

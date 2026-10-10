@@ -4,17 +4,20 @@ import {
   FileText,
   Globe,
   ArrowUpRight,
-  CheckCircle2,
-  Loader2,
   AlertCircle,
-  RotateCcw,
   Upload,
   Trash2,
+  Search,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { api, date } from './api';
 import { useResource } from './hooks';
 import { SectionHeading, Loading, Empty, Modal, Badge } from './components';
-import type { Source, ImportJob, SourceAttachment } from '../shared/contracts';
+import type { Source, ImportJob } from '../shared/contracts';
+import ImportActivity from './ImportActivity';
+import { useUrlState } from './navigation';
+import SourceContent, { SourceAttachments, type SourceSnapshot } from './SourceContent';
 
 export function SourceDetail({
   id,
@@ -29,27 +32,12 @@ export function SourceDetail({
   onGraph?: (id: string) => void;
   onCategorize: (id: string) => void;
 }) {
-  const { data, error, loading } = useResource(
-    () =>
-      api<
-        Source & {
-          revisions: {
-            id: string;
-            content_hash: string;
-            text: string;
-            observed_at: string;
-            parser: string;
-          }[];
-          passages: { id: string; revision_id: string; anchor: string; text: string }[];
-          attachments: SourceAttachment[];
-        }
-      >(`/sources/${id}`),
-    [id],
-  );
+  const { data, error, loading } = useResource(() => api<SourceSnapshot>(`/sources/${id}`), [id]);
   const [selected, setSelected] = useState('');
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const [confirm, setConfirm] = useState(false);
+  const [presentation, setPresentation] = useState<'read' | 'passages'>('read');
   const revision = data?.revisions.find((r) => r.id === selected) || data?.revisions[0];
   async function action(remove = false) {
     setBusy(true);
@@ -112,60 +100,71 @@ export function SourceDetail({
                 ))}
               </div>
             )}
-            <label>
-              Source revision
-              <select value={revision?.id || ''} onChange={(e) => setSelected(e.target.value)}>
-                {data.revisions.map((r) => (
-                  <option value={r.id} key={r.id}>
-                    {date(r.observed_at)} · {r.content_hash.slice(0, 12)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="source-reading">
-              {data.passages
-                .filter((p) => p.revision_id === revision?.id)
-                .map((p) => (
-                  <article key={p.id}>
-                    <small>{p.anchor}</small>
-                    <p>{p.text}</p>
-                  </article>
-                ))}
-            </div>
-            <p className="citation-anchor">Content SHA-256: {revision?.content_hash}</p>
-            {data.origin === 'note_station' && revision && (
-              <a
-                className="text-button source-original"
-                href={`/api/sources/${data.id}/revisions/${revision.id}/original`}
-              >
-                <FileText size={14} />
-                Download original note JSON
-              </a>
-            )}
-            {data.attachments?.some((attachment) => attachment.revision_id === revision?.id) && (
-              <section className="source-attachments">
-                <h3>Attachments</h3>
-                {data.attachments
-                  .filter((attachment) => attachment.revision_id === revision?.id)
-                  .map((attachment) => (
-                    <a key={attachment.id} href={`/api/attachments/${attachment.id}`}>
-                      {attachment.mime.startsWith('image/') &&
-                      attachment.size <= 10 * 1024 * 1024 ? (
-                        <img
-                          className="attachment-thumbnail"
-                          src={`/api/attachments/${attachment.id}`}
-                          alt=""
-                          loading="lazy"
-                        />
-                      ) : (
-                        <FileText size={15} />
-                      )}
-                      <span>{attachment.name}</span>
-                      <small>{(attachment.size / 1024).toFixed(1)} KB</small>
-                      <ArrowUpRight size={14} />
-                    </a>
+            {data.revisions.length > 1 && (
+              <label>
+                Source revision
+                <select value={revision?.id || ''} onChange={(e) => setSelected(e.target.value)}>
+                  {data.revisions.map((r) => (
+                    <option value={r.id} key={r.id}>
+                      {date(r.observed_at)}
+                      {r.id === data.revisions[0].id ? ' · Current snapshot' : ''}
+                    </option>
                   ))}
-              </section>
+                </select>
+              </label>
+            )}
+            <div className="source-presentation" aria-label="Source presentation">
+              <button
+                aria-pressed={presentation === 'read'}
+                onClick={() => setPresentation('read')}
+              >
+                Read
+              </button>
+              <button
+                aria-pressed={presentation === 'passages'}
+                onClick={() => setPresentation('passages')}
+              >
+                Citation passages
+              </button>
+            </div>
+            {presentation === 'read' ? (
+              <SourceContent source={data} revision={revision} />
+            ) : (
+              <div className="source-passages">
+                {data.passages
+                  .filter((p) => p.revision_id === revision?.id)
+                  .map((p) => (
+                    <article key={p.id}>
+                      <small>{p.anchor}</small>
+                      <p>{p.text}</p>
+                    </article>
+                  ))}
+              </div>
+            )}
+            <details className="source-provenance">
+              <summary>Source details &amp; original</summary>
+              <p>
+                Snapshot saved {date(revision?.observed_at || null)} ·{' '}
+                {data.passages.filter((p) => p.revision_id === revision?.id).length} citation
+                passages
+              </p>
+              <p className="citation-anchor">Content SHA-256: {revision?.content_hash}</p>
+              {data.origin === 'note_station' && revision && (
+                <a
+                  className="text-button source-original"
+                  href={`/api/sources/${data.id}/revisions/${revision.id}/original`}
+                >
+                  <FileText size={14} />
+                  Download original note JSON
+                </a>
+              )}
+            </details>
+            {presentation === 'passages' && (
+              <SourceAttachments
+                attachments={data.attachments?.filter(
+                  (attachment) => attachment.revision_id === revision?.id,
+                )}
+              />
             )}
             <div className="detail-bottom">
               <button className="button small" onClick={() => onCategorize(id)}>
@@ -215,21 +214,48 @@ export default function Sources({
   onImport,
   onOpen,
   onChanged,
+  latestImport,
+  onBrowseImported,
+  onReview,
 }: {
   revision: number;
   onImport: () => void;
   onOpen: (id: string) => void;
   onChanged: () => void;
+  latestImport?: string;
+  onBrowseImported: () => void;
+  onReview: () => void;
 }) {
   const sources = useResource(() => api<Source[]>('/sources'), [revision], 3000);
   const jobs = useResource(() => api<ImportJob[]>('/imports'), [revision], 3000);
   const [error, setError] = useState('');
+  const [retrying, setRetrying] = useState('');
+  const [query, setQuery] = useUrlState('sources_q', '');
+  const [status, setStatus] = useUrlState('sources_status', 'all', ['all', 'active', 'retracted']);
+  const [page, setPage] = useState(0);
+  const normalize = (value: string) =>
+    value.toLocaleLowerCase().normalize('NFKD').replace(/\p{M}/gu, '');
+  const filtered = (sources.data || []).filter(
+    (source) =>
+      (status === 'all' || source.status === status) &&
+      normalize(
+        [source.title, source.project, source.metadata?.stack, ...source.tags, source.url]
+          .filter(Boolean)
+          .join(' '),
+      ).includes(normalize(query.trim())),
+  );
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / 25) - 1));
+  const offset = currentPage * 25;
   async function retry(id: string) {
+    setRetrying(id);
+    setError('');
     try {
       await api(`/imports/${id}/retry`, {});
       onChanged();
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setRetrying('');
     }
   }
   return (
@@ -252,8 +278,8 @@ export default function Sources({
         <div>
           <h3>Bring your knowledge together.</h3>
           <p>
-            Import a document, paste a note, or save a public web page. Review the claims it
-            contains.
+            Import a document, paste a note, or save a web page. Note Station archives keep your
+            notebooks and original notes together.
           </p>
         </div>
         <button className="button" onClick={onImport}>
@@ -261,20 +287,80 @@ export default function Sources({
           <ArrowUpRight size={15} />
         </button>
       </div>
-      {(error || sources.error) && (
+      {(error || sources.error || jobs.error) && (
         <div className="inline-error" role="alert">
-          {error || sources.error}
+          {error || sources.error || jobs.error}
+          {(sources.error || jobs.error) && (
+            <button
+              className="button small"
+              onClick={() => {
+                sources.retry();
+                jobs.retry();
+              }}
+            >
+              Try again
+            </button>
+          )}
         </div>
       )}
+      <ImportActivity
+        jobs={jobs.data || []}
+        latestImport={latestImport}
+        retrying={retrying}
+        onRetry={(id) => void retry(id)}
+        onOpen={onOpen}
+        onBrowseImported={onBrowseImported}
+        onReview={onReview}
+      />
+      <div className="source-toolbar">
+        <div className="source-search">
+          <Search size={18} />
+          <input
+            aria-label="Search sources"
+            placeholder="Find a source, notebook, or tag…"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setPage(0);
+            }}
+          />
+          {query && (
+            <button
+              className="text-button"
+              onClick={() => {
+                setQuery('');
+                setPage(0);
+              }}
+              aria-label="Clear source search"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        <select
+          aria-label="Source status"
+          value={status}
+          onChange={(event) => {
+            setStatus(event.target.value);
+            setPage(0);
+          }}
+        >
+          <option value="all">All sources</option>
+          <option value="active">Active sources</option>
+          <option value="retracted">Retracted sources</option>
+        </select>
+      </div>
       <div className="results-heading">
-        <span>{sources.data?.length || 0} retained sources</span>
+        <span>
+          {filtered.length} {query || status !== 'all' ? 'matching' : 'retained'} sources
+        </span>
         <span>Immutable snapshots · Original evidence</span>
       </div>
       {sources.loading && !sources.data ? (
         <Loading />
-      ) : sources.data?.length ? (
+      ) : filtered.length ? (
         <div className="source-list">
-          {sources.data.map((s) => (
+          {filtered.slice(offset, offset + 25).map((s) => (
             <button className="source-row" key={s.id} onClick={() => onOpen(s.id)}>
               <div className="source-icon">
                 {s.origin === 'url' ? <Globe size={21} /> : <FileText size={21} />}
@@ -306,6 +392,23 @@ export default function Sources({
             </button>
           ))}
         </div>
+      ) : query || status !== 'all' ? (
+        <Empty
+          title="No matching sources"
+          description="Try another title or notebook, or clear your filters."
+          action={
+            <button
+              className="button small"
+              onClick={() => {
+                setQuery('');
+                setStatus('all');
+                setPage(0);
+              }}
+            >
+              Clear source filters
+            </button>
+          }
+        />
       ) : (
         <Empty
           title="Start with a source you trust"
@@ -317,64 +420,30 @@ export default function Sources({
           }
         />
       )}
-      {!!jobs.data?.length && (
-        <section className="jobs-section">
-          <div className="section-title">
-            <h2>Import activity</h2>
-            <span className="section-caption">Saved progress · Safe to retry</span>
-          </div>
-          {jobs.data.map((j) => (
-            <article key={j.id} className="job-row">
-              <div className={`job-icon ${j.status}`}>
-                {j.status === 'completed' ? (
-                  <CheckCircle2 size={19} />
-                ) : j.status === 'failed' ? (
-                  <AlertCircle size={19} />
-                ) : (
-                  <Loader2 className="spin" size={19} />
-                )}
-              </div>
-              <div className="job-content">
-                <strong>{j.title}</strong>
-                <small>
-                  {j.status === 'completed'
-                    ? j.result.scanned !== undefined
-                      ? `${j.result.scanned} items scanned · ${j.result.categorized || 0} categorized · ${j.result.uncategorized || 0} uncategorized`
-                      : j.result.notes !== undefined
-                        ? `${j.result.imported || 0} notes imported · ${j.result.duplicates || 0} unchanged · ${j.result.skipped || 0} skipped · ${j.result.attachments || 0} attachments · ${j.result.claims || 0} claim candidates`
-                        : `${j.result.claims || 0} claims · ${j.result.duplicate ? 'Existing revision reused' : 'Ready for review'}`
-                    : j.status === 'failed'
-                      ? j.error
-                      : `${j.stage} · ${j.progress}%`}
-                </small>
-                {j.warnings.map((w) => (
-                  <p className="job-warning" key={w}>
-                    {w}
-                  </p>
-                ))}
-                {j.status === 'running' && (
-                  <div className="progress-track">
-                    <i style={{ width: `${j.progress}%` }} />
-                  </div>
-                )}
-              </div>
-              <Badge
-                tone={j.status === 'completed' ? 'green' : j.status === 'failed' ? 'red' : 'amber'}
-              >
-                {j.status}
-              </Badge>
-              {j.status === 'failed' && (
-                <button
-                  className="icon-button"
-                  aria-label={`Retry ${j.title}`}
-                  onClick={() => void retry(j.id)}
-                >
-                  <RotateCcw size={16} />
-                </button>
-              )}
-            </article>
-          ))}
-        </section>
+      {filtered.length > 25 && (
+        <div className="pagination">
+          <button
+            className="button small"
+            aria-label="Previous source page"
+            disabled={!currentPage}
+            onClick={() => setPage(currentPage - 1)}
+          >
+            <ChevronLeft size={14} />
+            Previous
+          </button>
+          <span>
+            {offset + 1}–{Math.min(offset + 25, filtered.length)} of {filtered.length}
+          </span>
+          <button
+            className="button small"
+            aria-label="Next source page"
+            disabled={offset + 25 >= filtered.length}
+            onClick={() => setPage(currentPage + 1)}
+          >
+            Next
+            <ChevronRight size={14} />
+          </button>
+        </div>
       )}
     </>
   );

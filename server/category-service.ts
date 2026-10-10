@@ -17,6 +17,7 @@ import {
   CATEGORY_PROTOTYPES,
   type CategoryEmbedder,
   type CategoryPrototype,
+  type NotebookContext,
 } from './semantic-categories.js';
 import type { CategorySuggestion } from './categorization.js';
 
@@ -83,14 +84,14 @@ export class CategoryService {
     suggestions: (CategorySuggestion & Partial<ItemCategory>)[],
   ): Promise<ItemCategory[]> {
     const result: ItemCategory[] = [];
-    for (const suggestion of suggestions)
+    for (const suggestion of suggestions.filter((item) => item.namespace !== 'collections'))
       result.push({ ...suggestion, category_id: await this.ensureCategory(q, suggestion) });
     return result;
   }
   private async apply(q: QueryDB, nodeId: string, automatic: ItemCategory[]) {
     const decisions = await rows<{ category_id: string; decision: 'accept' | 'dismiss' }>(
       q,
-      'SELECT category_id,decision FROM category_decisions WHERE node_id=$1',
+      "SELECT d.category_id,d.decision FROM category_decisions d JOIN nodes n ON n.id=d.category_id AND n.type='category' WHERE d.node_id=$1",
       [nodeId],
     );
     const choices = new Map(decisions.map((decision) => [decision.category_id, decision.decision]));
@@ -194,8 +195,88 @@ export class CategoryService {
     });
   }
   async ensureBackfill() {
+    await this.db.transaction((q) => this.retireImportedCollections(q));
     const status = await this.status();
     if (status.pending && !status.job) await this.queue();
+  }
+  /** Keep legacy owner decisions in backups, but retire generated import folders. */
+  async retireImportedCollections(q: QueryDB) {
+    await q.query(`DELETE FROM relations WHERE type IN ('categorized_as','category_parent')
+      AND (source_node IN (SELECT id FROM entities WHERE canonical LIKE 'collections:%')
+        OR target_node IN (SELECT id FROM entities WHERE canonical LIKE 'collections:%'))`);
+    await q.query(
+      "UPDATE nodes SET type='import_collection' WHERE type='category' AND id IN (SELECT id FROM entities WHERE canonical LIKE 'collections:%')",
+    );
+    await q.query(
+      "UPDATE entities SET type='import_collection' WHERE type='category' AND canonical LIKE 'collections:%'",
+    );
+  }
+  private async notebookProfiles() {
+    const sources = await rows<{ id: string; notebook: string | null }>(
+      this.db,
+      "SELECT id,metadata->>'notebook_id' AS notebook FROM sources WHERE status='active'",
+    );
+    const votes = await rows<{ id: string; path: string[] }>(
+      this.db,
+      `
+      SELECT r.source_node AS id,r.properties->'path' AS path FROM relations r
+      JOIN entities e ON e.id=r.target_node AND e.type='category' AND e.canonical LIKE 'topics:%'
+      JOIN sources s ON s.id=r.source_node AND s.status='active'
+      WHERE r.type='categorized_as' AND r.properties->>'method'='semantic'
+        AND r.properties->>'confidence'='high' AND r.properties->>'level'='specific'
+        AND r.properties->>'basis' <> 'notebook_context'
+      UNION ALL
+      SELECT d.node_id,substring(e.canonical FROM 8)::jsonb FROM category_decisions d
+      JOIN entities e ON e.id=d.category_id AND e.type='category' AND e.canonical LIKE 'topics:%'
+      JOIN sources s ON s.id=d.node_id AND s.status='active'
+      WHERE d.decision='accept'`,
+    );
+    const groups = new Map<string, Map<string, string[][]>>();
+    for (const source of sources) {
+      if (!source.notebook) continue;
+      if (!groups.has(source.notebook)) groups.set(source.notebook, new Map());
+      groups.get(source.notebook)!.set(source.id, []);
+    }
+    const notebookOf = new Map(sources.map((source) => [source.id, source.notebook]));
+    for (const vote of votes) {
+      const notebook = notebookOf.get(vote.id);
+      if (notebook && Array.isArray(vote.path) && vote.path.length > 1)
+        groups.get(notebook)?.get(vote.id)?.push(vote.path);
+    }
+    return groups;
+  }
+  private notebookContext(
+    profiles: Awaited<ReturnType<CategoryService['notebookProfiles']>>,
+    input: ClassificationInput,
+    nodeId: string,
+  ): NotebookContext | undefined {
+    const group = input.metadata?.notebook_id && profiles.get(input.metadata.notebook_id);
+    if (!group) return;
+    const counts = new Map<string, number>();
+    let classified = 0,
+      peers = 0;
+    for (const [id, paths] of group) {
+      if (id === nodeId) continue; // A note cannot corroborate itself.
+      peers++;
+      const unique = [
+        ...new Set(paths.map((path) => JSON.stringify(path.map((part) => part.toLowerCase())))),
+      ];
+      if (unique.length !== 1) continue; // Multi-subject notes are not confident votes.
+      classified++;
+      counts.set(unique[0], (counts.get(unique[0]) || 0) + 1);
+    }
+    const winner = [...counts].sort((a, b) => b[1] - a[1])[0];
+    if (
+      !winner ||
+      winner[1] < 5 ||
+      winner[1] / Math.max(1, classified) < 0.8 ||
+      winner[1] / Math.max(1, peers) < 0.5
+    )
+      return;
+    const path = CATEGORY_PROTOTYPES.find(
+      (item) => JSON.stringify(item.path.map((part) => part.toLowerCase())) === winner[0],
+    )?.path;
+    if (path) return { path, support: winner[1], peers };
   }
   async status(): Promise<CategorizationStatus> {
     const count = await one<{ total: number; scanned: number }>(
@@ -219,9 +300,18 @@ export class CategoryService {
         semantic_errors: number;
         suggested: number;
         needs_review: number;
+        broad_assigned: number;
+        corroborated: number;
       }>(
         this.db,
-        "SELECT count(*) FILTER(WHERE semantic_state='pending')::int AS semantic_pending,count(*) FILTER(WHERE semantic_state='error')::int AS semantic_errors,count(*) FILTER(WHERE jsonb_array_length(suggestions)>0)::int AS suggested,count(*) FILTER(WHERE jsonb_array_length(suggestions)>0 AND EXISTS(SELECT 1 FROM relations r WHERE r.source_node=c.node_id AND r.type='categorized_as' AND r.properties->>'method'='fallback'))::int AS needs_review FROM categorizations c",
+        `SELECT count(*) FILTER(WHERE semantic_state='pending')::int AS semantic_pending,
+          count(*) FILTER(WHERE semantic_state='error')::int AS semantic_errors,
+          count(*) FILTER(WHERE jsonb_array_length(suggestions)>0)::int AS suggested,
+          count(*) FILTER(WHERE EXISTS(SELECT 1 FROM relations r WHERE r.source_node=c.node_id AND r.type='categorized_as' AND r.properties->>'method'='fallback'))::int AS needs_review,
+          count(*) FILTER(WHERE EXISTS(SELECT 1 FROM relations r WHERE r.source_node=c.node_id AND r.type='categorized_as' AND r.properties->>'level'='broad'))::int AS broad_assigned,
+          count(*) FILTER(WHERE EXISTS(SELECT 1 FROM relations r WHERE r.source_node=c.node_id AND r.type='categorized_as' AND r.properties->>'basis' IN ('corroborated','title_corroborated')))::int AS corroborated
+          FROM categorizations c WHERE engine_version=$1`,
+        [this.engineVersion],
       ))!,
       model_state: this.embedder?.state || 'disabled',
       model_error: (this.embedder as CategoryEmbedder & { error?: string | null })?.error || null,
@@ -241,13 +331,20 @@ export class CategoryService {
       };
     });
   }
-  private async categorizeSemantic(nodeId: string) {
+  private async categorizeSemantic(
+    nodeId: string,
+    profiles: Awaited<ReturnType<CategoryService['notebookProfiles']>>,
+  ) {
     if (!this.semantic) return;
     const input = await this.input(this.db, nodeId);
     if (!input) return;
     const fingerprint = this.fingerprint(input);
     try {
-      const result = await this.semantic.analyze(input, await this.extraPrototypes());
+      const result = await this.semantic.analyze(
+        input,
+        await this.extraPrototypes(),
+        this.notebookContext(profiles, input, nodeId),
+      );
       await this.db.transaction(async (q) => {
         const current = await this.input(q, nodeId);
         const state = await one<{ input_hash: string; engine_version: string }>(
@@ -309,9 +406,10 @@ export class CategoryService {
         "SELECT node_id FROM categorizations WHERE semantic_state='pending' AND engine_version=$1 ORDER BY scanned_at,node_id LIMIT $2",
         [this.engineVersion, limit],
       );
+      const profiles = await this.notebookProfiles();
       for (const item of pending) {
         try {
-          await this.categorizeSemantic(item.node_id);
+          await this.categorizeSemantic(item.node_id, profiles);
         } catch {
           /* Persisted per item; visible in category status and retryable by rescan. */
         }
@@ -349,12 +447,12 @@ export class CategoryService {
     };
     const assigned = await rows<{ category_id: string; properties: ItemCategory }>(
       this.db,
-      "SELECT target_node AS category_id,properties FROM relations WHERE source_node=$1 AND type='categorized_as'",
+      "SELECT r.target_node AS category_id,r.properties FROM relations r JOIN nodes n ON n.id=r.target_node AND n.type='category' WHERE r.source_node=$1 AND r.type='categorized_as'",
       [nodeId],
     );
     const decisions = await rows<{ category_id: string; decision: 'accept' | 'dismiss' }>(
       this.db,
-      'SELECT category_id,decision FROM category_decisions WHERE node_id=$1',
+      "SELECT d.category_id,d.decision FROM category_decisions d JOIN nodes n ON n.id=d.category_id AND n.type='category' WHERE d.node_id=$1",
       [nodeId],
     );
     return {
@@ -368,11 +466,14 @@ export class CategoryService {
         category_id: edge.category_id,
         path: pathOf(edge.category_id),
       })),
-      suggestions: (state?.suggestions || []).map((item) => ({
-        ...item,
-        path: pathOf(item.category_id),
-        decision: decisions.find((decision) => decision.category_id === item.category_id)?.decision,
-      })),
+      suggestions: (state?.suggestions || [])
+        .filter((item) => byId.has(item.category_id))
+        .map((item) => ({
+          ...item,
+          path: pathOf(item.category_id),
+          decision: decisions.find((decision) => decision.category_id === item.category_id)
+            ?.decision,
+        })),
       decisions: decisions.map((decision) => ({
         ...decision,
         path: pathOf(decision.category_id),
@@ -454,6 +555,9 @@ export class CategoryService {
     while (this.processing) await new Promise((resolve) => setTimeout(resolve, 25));
     this.processing = true;
     try {
+      await this.db.transaction((q) => this.retireImportedCollections(q));
+      // Freeze independent peer votes before the rescan replaces assignments.
+      const profiles = await this.notebookProfiles();
       if (this.embedder) {
         await this.db.query(
           "UPDATE jobs SET stage='Loading local category model',progress=0 WHERE id=$1",
@@ -472,7 +576,7 @@ export class CategoryService {
       const result = { scanned: 0, total: targets.length, categorized: 0, uncategorized: 0 };
       for (const target of targets) {
         await this.db.transaction((q) => this.classify(q, target.id, true));
-        if (this.embedder?.state === 'ready') await this.categorizeSemantic(target.id);
+        if (this.embedder?.state === 'ready') await this.categorizeSemantic(target.id, profiles);
         else if (this.embedder?.state === 'disabled')
           await this.db.query(
             "UPDATE categorizations SET semantic_state='disabled' WHERE node_id=$1",

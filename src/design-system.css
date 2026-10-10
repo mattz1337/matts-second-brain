@@ -1,4 +1,4 @@
-/* Commonplace surfaces: glass for navigation, solid paper for reading. */
+/* Orbit surfaces: glass for navigation, solid paper for reading. */
 :root {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   color-scheme: light;
@@ -1779,5 +1779,132 @@ textarea::placeholder {
   .knowledge-card.is-selected,
   .library-source-card[aria-pressed='true'] {
     border: 1px solid Highlight;
+  }
+}
+.capture-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.draft-confirm {
+  margin: 0 0 18px;
+  padding: 16px;
+  background: var(--sage);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+.draft-confirm p {
+  color: var(--muted);
+  margin: 6px 0 12px;
+}
+.draft-confirm > div,
+.notebook-selection-actions,
+.job-next-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.notebook-selection-actions {
+  margin-bottom: 12px;
+}
+.notebook-selection-actions > span,
+.save-shortcut {
+  color: var(--muted);
+  font-size: 12px;
+}
+.source-toolbar {
+  display: flex;
+  gap: 12px;
+  margin: 24px 0 10px;
+}
+.source-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--paper);
+  color: var(--muted);
+}
+.source-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+.source-toolbar select {
+  max-width: 180px;
+}
+.import-activity {
+  margin: 24px 0;
+}
+.import-activity .job-row {
+  align-items: flex-start;
+}
+.import-activity .job-content {
+  min-width: 0;
+}
+.import-activity .job-content > strong {
+  overflow-wrap: anywhere;
+}
+.latest-import {
+  border-radius: 14px;
+  background: var(--sage);
+}
+.job-content progress {
+  display: block;
+  width: 100%;
+  height: 6px;
+  margin-top: 12px;
+  accent-color: var(--accent);
+}
+.job-next-actions {
+  margin-top: 8px;
+}
+.job-warnings {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 8px;
+}
+.job-warnings summary {
+  cursor: pointer;
+}
+.activity-toggle {
+  margin: 10px 0;
+}
+.review-notice {
+  color: var(--green);
+}
+.toast > .toast-action {
+  width: auto;
+  white-space: nowrap;
+  color: var(--green);
+  font-weight: 600;
+  padding: 4px 8px;
+}
+@media (max-width: 600px) {
+  .source-toolbar {
+    flex-direction: column;
+  }
+  .source-toolbar select {
+    max-width: none;
+  }
+  .import-activity .job-row {
+    flex-wrap: wrap;
+  }
+  .import-activity .job-content {
+    flex-basis: calc(100% - 48px);
+  }
+  .capture-fields {
+    gap: 14px;
   }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import LibraryReader, { type LibrarySelection } from './LibraryReader';
 import {
   Search,
@@ -11,7 +11,8 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { api, pretty, date } from './api';
-import { useResource } from './hooks';
+import { useResource, useDebouncedValue } from './hooks';
+import { updateLocation, useUrlState } from './navigation';
 import { SectionHeading, KnowledgeCard, Loading, Empty, Badge } from './components';
 import {
   kinds,
@@ -50,28 +51,89 @@ export default function Library({
   onGraph: (id: string) => void;
   onCategorize: (id: string) => void;
 }) {
-  const [topic, setTopic] = useState('');
-  const [kind, setKind] = useState('');
-  const [status, setStatus] = useState('all');
-  const [project, setProject] = useState('');
+  const [topic, setTopic] = useUrlState('library_topic', '');
+  const [kind, setKind] = useUrlState('library_kind', '', ['', ...kinds]);
+  const [status, setStatus] = useUrlState('library_status', 'all', [
+    'all',
+    'active',
+    'imported',
+    'candidate',
+    'archived',
+  ]);
+  const [project, setProject] = useUrlState('library_project', '');
   const [sourceOffset, setSourceOffset] = useState(0);
-  const [includeStale, setIncludeStale] = useState(true);
+  const [freshness, setFreshness] = useUrlState('library_fresh', '', ['', 'only-current']);
+  const includeStale = freshness !== 'only-current';
+  const setIncludeStale = (next: boolean) => setFreshness(next ? '' : 'only-current');
   const [advanced, setAdvanced] = useState(false);
-  const [temporal, setTemporal] = useState('current');
-  const [asOf, setAsOf] = useState('');
-  const [recordedAt, setRecordedAt] = useState('');
+  const [temporal, setTemporal] = useUrlState('library_temporal', 'current', [
+    'current',
+    'historical',
+    'all',
+  ]);
+  const [asOf, setAsOf] = useUrlState('library_asof', '');
+  const [recordedAt, setRecordedAt] = useUrlState('library_recorded', '');
   const [offset, setOffset] = useState(0);
   const [digest, setDigest] = useState<Digest | null>(null);
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState('');
   const [selected, setSelected] = useState<LibrarySelection | null>(null);
   const [readerOpen, setReaderOpen] = useState(false);
+  const searchQuery = useDebouncedValue(query);
+  const askGeneration = useRef(0);
+  const filtersActive = !!(
+    topic ||
+    kind ||
+    status !== 'all' ||
+    project ||
+    !includeStale ||
+    temporal !== 'current' ||
+    asOf ||
+    recordedAt
+  );
+  const searchSignature = JSON.stringify([
+    query,
+    topic,
+    project,
+    kind,
+    status,
+    includeStale,
+    temporal,
+    asOf,
+    recordedAt,
+  ]);
+  useEffect(() => {
+    askGeneration.current++;
+    setDigest(null);
+    setAskError('');
+    setAsking(false);
+  }, [searchSignature, revision]);
+  useEffect(() => {
+    setOffset(0);
+    setSourceOffset(0);
+  }, [searchSignature]);
+  const dateIso = (value: string) =>
+    /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value))
+      ? new Date(value).toISOString()
+      : undefined;
+  function clearFilters() {
+    updateLocation({
+      library_topic: null,
+      library_kind: null,
+      library_status: null,
+      library_project: null,
+      library_fresh: null,
+      library_temporal: null,
+      library_asof: null,
+      library_recorded: null,
+    });
+  }
   function choose(id: string, type: LibrarySelection['type']) {
     setSelected({ id, type });
     setReaderOpen(true);
   }
   const request = {
-    query,
+    query: searchQuery,
     topic,
     ...(kind ? { kind } : {}),
     lifecycle: ['all', 'imported'].includes(status) ? 'active' : status,
@@ -79,15 +141,15 @@ export default function Library({
     include_stale: includeStale,
     include_candidates: status === 'candidate',
     temporal_mode: temporal,
-    ...(asOf ? { as_of: new Date(asOf).toISOString() } : {}),
-    ...(recordedAt ? { recorded_at: new Date(recordedAt).toISOString() } : {}),
+    ...(dateIso(asOf) ? { as_of: dateIso(asOf) } : {}),
+    ...(dateIso(recordedAt) ? { recorded_at: dateIso(recordedAt) } : {}),
     limit: 20,
     offset,
   };
-  const { data, error, loading } = useResource(
+  const { data, error, loading, retry } = useResource(
     () => api<SearchResult>('/search', request),
     [
-      query,
+      searchQuery,
       topic,
       project,
       kind,
@@ -105,7 +167,7 @@ export default function Library({
     () =>
       showSources
         ? api<SourceBrowseResult>('/sources/search', {
-            query,
+            query: searchQuery,
             topic,
             project,
             origin: status === 'imported' ? 'note_station' : 'all',
@@ -113,7 +175,7 @@ export default function Library({
             offset: sourceOffset,
           })
         : Promise.resolve({ items: [], total: 0 }),
-    [showSources, status, query, topic, project, sourceOffset, revision],
+    [showSources, status, searchQuery, topic, project, sourceOffset, revision],
   );
   const visibleKnowledge = status === 'imported' ? [] : data?.items || [];
   const visibleSources = showSources ? sources.data?.items || [] : [];
@@ -133,14 +195,16 @@ export default function Library({
     }
   }, [selectionKey, loading, sources.loading, selected?.id, selected?.type, showSources]);
   async function ask() {
+    const generation = ++askGeneration.current;
     setAsking(true);
     setAskError('');
     try {
-      setDigest(await api<Digest>('/answer', { ...request, offset: 0 }));
+      const result = await api<Digest>('/answer', { ...request, query, offset: 0 });
+      if (generation === askGeneration.current) setDigest(result);
     } catch (e) {
-      setAskError((e as Error).message);
+      if (generation === askGeneration.current) setAskError((e as Error).message);
     } finally {
-      setAsking(false);
+      if (generation === askGeneration.current) setAsking(false);
     }
   }
   return (
@@ -169,6 +233,15 @@ export default function Library({
           }}
           placeholder="Search an idea, a topic, or a question…"
         />
+        {query && (
+          <button
+            className="text-button"
+            aria-label="Clear library search"
+            onClick={() => setQuery('')}
+          >
+            Clear
+          </button>
+        )}
         <button
           className="button small"
           disabled={!query.trim() || asking}
@@ -265,8 +338,13 @@ export default function Library({
           <SlidersHorizontal size={14} />
           Filters
         </button>
+        {filtersActive && (
+          <button className="text-button" onClick={clearFilters}>
+            Clear filters
+          </button>
+        )}
       </div>
-      {advanced && (
+      {(advanced || kind || !includeStale || temporal !== 'current' || asOf || recordedAt) && (
         <div className="advanced-search">
           <label>
             Kind
@@ -316,6 +394,17 @@ export default function Library({
       {(error || askError || sources.error) && (
         <div className="inline-error" role="alert">
           {error || askError || sources.error}
+          {(error || sources.error) && (
+            <button
+              className="button small"
+              onClick={() => {
+                retry();
+                sources.retry();
+              }}
+            >
+              Try again
+            </button>
+          )}
         </div>
       )}
       {digest && (
@@ -358,13 +447,20 @@ export default function Library({
               : 'Your collection'}
           {query ? ' matching your search' : ''}
         </span>
-        {query && (
-          <span className="search-mode">
-            {data?.mode === 'hybrid' ? 'Semantic + keyword + connections' : 'Keyword search'}
-          </span>
+        {loading || (showSources && sources.loading) || query !== searchQuery ? (
+          <span aria-live="polite">Updating results…</span>
+        ) : (
+          query && (
+            <span className="search-mode">
+              {data?.mode === 'hybrid' ? 'Semantic + keyword + connections' : 'Keyword search'}
+            </span>
+          )
         )}
       </div>
-      <div className={`library-browser ${readerOpen ? 'reader-open' : ''}`}>
+      <div
+        className={`library-browser ${readerOpen ? 'reader-open' : ''}`}
+        aria-busy={loading || (showSources && sources.loading) || query !== searchQuery}
+      >
         <div className="library-results-pane" role="region" aria-label="Library results">
           {status !== 'imported' &&
             (loading && !data ? (

@@ -23,12 +23,13 @@ function saved(key: string) {
 }
 export function AppearanceProvider({ children }: { children: ReactNode }) {
   const [appearance, setAppearance] = useState<Appearance>(() => {
-    const value = saved('commonplace-appearance');
+    const value = saved('orbit-appearance') ?? saved('commonplace-appearance');
     return value === 'light' || value === 'dark' ? value : 'system';
   });
   const [dark, setDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches);
   const [reduceTransparency, setReduceTransparency] = useState(
-    () => saved('commonplace-reduce-transparency') === 'true',
+    () =>
+      (saved('orbit-reduce-transparency') ?? saved('commonplace-reduce-transparency')) === 'true',
   );
   const resolved = appearance === 'system' ? (dark ? 'dark' : 'light') : appearance;
   useEffect(() => {
@@ -41,8 +42,8 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     document.documentElement.dataset.theme = resolved;
     document.documentElement.dataset.transparency = reduceTransparency ? 'reduced' : 'normal';
     try {
-      localStorage.setItem('commonplace-appearance', appearance);
-      localStorage.setItem('commonplace-reduce-transparency', String(reduceTransparency));
+      localStorage.setItem('orbit-appearance', appearance);
+      localStorage.setItem('orbit-reduce-transparency', String(reduceTransparency));
     } catch {
       /* Appearance works when storage is unavailable. */
     }

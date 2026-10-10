@@ -1,4 +1,17 @@
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+  }
+}
+let sessionGeneration = 0;
+export function resetApiSession() {
+  sessionGeneration++;
+}
 export async function api<T>(url: string, body?: unknown, method?: string): Promise<T> {
+  const generation = sessionGeneration;
   const response = await fetch(`/api${url}`, {
     method: method || (body !== undefined ? 'POST' : 'GET'),
     credentials: 'same-origin',
@@ -18,7 +31,9 @@ export async function api<T>(url: string, body?: unknown, method?: string): Prom
     } catch {
       /* preserve HTTP error */
     }
-    throw new Error(message);
+    if (response.status === 401 && url !== '/session' && generation === sessionGeneration)
+      window.dispatchEvent(new Event('orbit:unauthorized'));
+    throw new ApiError(message, response.status);
   }
   return response.json() as Promise<T>;
 }

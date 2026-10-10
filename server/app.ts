@@ -14,13 +14,24 @@ import { BrainService, scope } from './service.js';
 import { identify, localGuard, type Credentials } from './auth.js';
 import { createMcpServer, invokeTool, toolDefinitions } from './mcp.js';
 import { AppError } from './errors.js';
+import { BrowserSessions, type AccessOptions } from './access.js';
 
 const id = z.string().uuid();
-export function createApp(service: BrainService, keys: Credentials, port = 4310) {
+export function createApp(
+  service: BrainService,
+  keys: Credentials,
+  port = 4310,
+  access: AccessOptions = { mode: 'local' },
+) {
   const app = express();
+  const sessions = new BrowserSessions(access);
   app.disable('x-powered-by');
-  app.set('trust proxy', false);
-  app.use(localGuard(port));
+  app.set('trust proxy', access.trustProxy?.length ? access.trustProxy : false);
+  app.use(localGuard(port, access));
+  app.use((_req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    next();
+  });
   app.use((_req, res, next) => {
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('Referrer-Policy', 'same-origin');
@@ -34,22 +45,43 @@ export function createApp(service: BrainService, keys: Credentials, port = 4310)
   app.use(express.json({ limit: '50mb' }));
   app.use(cookieParser());
   app.get('/api/health', (_req, res) => res.json({ status: 'ok', profile: 'local-spike' }));
-  app.post('/api/session', (req, res) => {
-    if (!req.get('origin'))
-      throw new AppError(
-        403,
-        'origin_required',
-        'Local browser session requires a same-origin request.',
-      );
-    res.cookie('commonplace_session', keys.session, {
-      httpOnly: true,
-      sameSite: 'strict',
-      path: '/',
-      maxAge: 86400000,
+  const cookieOptions = {
+    httpOnly: true,
+    sameSite: 'strict' as const,
+    path: '/',
+    secure: access.mode === 'password',
+  };
+  app.get('/api/session', (req, res) => {
+    const token = String(req.cookies?.orbit_session || '');
+    res.json({
+      mode: access.mode,
+      authenticated: access.mode === 'password' ? sessions.valid(token) : token === keys.session,
     });
-    res.json({ authenticated: true, owner: 'Matt' });
   });
-  app.use('/api', identify(keys));
+  app.post('/api/session', async (req, res) => {
+    if (!req.get('origin'))
+      throw new AppError(403, 'origin_required', 'Browser login requires a same-origin request.');
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const token =
+      access.mode === 'password'
+        ? await sessions.login(password, req.ip || req.socket.remoteAddress || 'unknown')
+        : keys.session;
+    // A new login replaces the existing browser session.
+    sessions.logout(String(req.cookies?.orbit_session || ''));
+    res.cookie('orbit_session', token, {
+      ...cookieOptions,
+      maxAge: access.mode === 'password' ? sessions.ttl : 86400000,
+    });
+    res.json({ authenticated: true, mode: access.mode });
+  });
+  app.delete('/api/session', (req, res) => {
+    if (!req.get('origin'))
+      throw new AppError(403, 'origin_required', 'Logout requires a same-origin request.');
+    sessions.logout(String(req.cookies?.orbit_session || ''));
+    res.clearCookie('orbit_session', cookieOptions);
+    res.json({ authenticated: false });
+  });
+  app.use('/api', identify(keys, false, sessions));
   app.use('/api', (_req, res, next) => {
     res.set('Cache-Control', 'no-store');
     next();
@@ -242,7 +274,7 @@ export function createApp(service: BrainService, keys: Credentials, port = 4310)
     res.set('Content-Type', 'application/zip');
     res.set(
       'Content-Disposition',
-      `attachment; filename="commonplace-${new Date().toISOString().slice(0, 10)}.zip"`,
+      `attachment; filename="orbit-${new Date().toISOString().slice(0, 10)}.zip"`,
     );
     await pipeline(stream, res);
   });
@@ -252,7 +284,7 @@ export function createApp(service: BrainService, keys: Credentials, port = 4310)
     fileFilter: (_req, file, callback) =>
       /\.zip$/i.test(file.originalname)
         ? callback(null, true)
-        : callback(new AppError(400, 'invalid_backup', 'Choose a Commonplace ZIP backup.')),
+        : callback(new AppError(400, 'invalid_backup', 'Choose an Orbit ZIP backup.')),
   });
   app.post(
     '/api/restore/bundle',
@@ -297,7 +329,7 @@ export function createApp(service: BrainService, keys: Credentials, port = 4310)
   app.get('/api/export', async (req, res) => {
     res.set(
       'Content-Disposition',
-      `attachment; filename="commonplace-${new Date().toISOString().slice(0, 10)}.json"`,
+      `attachment; filename="orbit-${new Date().toISOString().slice(0, 10)}.json"`,
     );
     res.json(await service.exportData(req.actor));
   });
@@ -325,7 +357,7 @@ export function createApp(service: BrainService, keys: Credentials, port = 4310)
   app.get('/api/integrations', (req, res) => {
     scope(req.actor, 'brain:admin');
     res.json({
-      endpoint: `http://127.0.0.1:${port}/mcp`,
+      endpoint: `${access.publicOrigin || `http://127.0.0.1:${port}`}/mcp`,
       assistant_token: keys.assistant,
       reader_token: keys.reader,
       tools: Object.entries(toolDefinitions).map(([name, d]) => ({
@@ -333,7 +365,10 @@ export function createApp(service: BrainService, keys: Credentials, port = 4310)
         description: d.description,
         scope: d.scope,
       })),
-      profile: 'Local-only. No remote OAuth deployment is configured.',
+      profile:
+        access.mode === 'password'
+          ? 'Password-protected single-owner server. MCP uses scoped bearer tokens; OAuth is not configured.'
+          : 'Local-only. No remote OAuth deployment is configured.',
     });
   });
   app.post('/api/tools/:name', async (req, res) =>

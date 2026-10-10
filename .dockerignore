@@ -1,0 +1,16 @@
+.git
+.data
+.secrets
+.env
+.env.*
+!.env.example
+node_modules
+dist
+build
+test-results
+playwright-report
+*.nsx
+orbit-*.tar
+.tmp-orbit-*.tar*
+commonplace-*.tar
+*.log

@@ -10,6 +10,12 @@ try {
   const classifier = new SemanticCategories(model);
   const cases = [
     {
+      title: 'besten Lebkuchen nusselt',
+      text: 'IMG_001.jpg',
+      notebook: 'Erstes Notizbuch',
+      expected: 'Food & cooking',
+    },
+    {
       title: 'Extrusion adjustment',
       text: 'Reducing how far the filament is pulled back helps prevent thin hairs between printed parts.',
       notebook: 'Maker experiments',

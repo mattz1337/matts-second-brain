@@ -228,25 +228,48 @@ describe('Note Station migration', () => {
     expect(await storeAttachment(service.storageRoot, media)).toBe(digest);
     expect(await readFile(file)).toEqual(media);
   });
-  it('exports and restores a ZIP backup with metadata and exact attachment bytes', async () => {
-    await importArchive(await nsxFixture());
-    const file = path.join(root, `${randomUUID()}.zip`);
-    await pipeline(await backupStream(service, owner), createWriteStream(file));
-    const restoredDb = await openDatabase();
-    const restored = new BrainService(restoredDb, undefined, path.join(root, randomUUID()));
-    try {
-      expect(await restoreBundle(restored, owner, file)).toMatchObject({ sources: 2 });
-      const detail = await restored.sourceDetail(owner, (await restored.sources(owner))[0].id);
-      const attachment = await restored.attachment(owner, String(detail.attachments[0].id));
-      expect(await readFile(attachment.file)).toEqual(media);
-      expect(detail.metadata?.note_id).toBeTruthy();
-      expect(
-        (await restored.search(owner, { query: 'LabNeedle' })).passages.length,
-      ).toBeGreaterThan(0);
-    } finally {
-      await restoredDb.close();
-    }
-  });
+  it.each(['orbit-export', 'commonplace-export'])(
+    'restores a %s ZIP backup with metadata and exact attachment bytes',
+    async (format) => {
+      await importArchive(await nsxFixture());
+      const file = path.join(root, `${randomUUID()}.zip`);
+      await pipeline(await backupStream(service, owner), createWriteStream(file));
+      const archive = await SafeZip.open(file);
+      try {
+        const manifest = JSON.parse(
+          (await archive.read('brain.json', 64 * 1024 * 1024)).toString('utf8'),
+        );
+        expect(manifest.format).toBe('orbit-export');
+        if (format === 'commonplace-export') {
+          manifest.format = format;
+          const entries: { name: string; bytes: Buffer }[] = [
+            { name: 'brain.json', bytes: Buffer.from(JSON.stringify(manifest)) },
+          ];
+          for (const name of archive.entries.keys())
+            if (name !== 'brain.json')
+              entries.push({ name, bytes: await archive.read(name, 64 * 1024 * 1024) });
+          archive.close();
+          await writeFile(file, await zipBytes(entries));
+        }
+      } finally {
+        archive.close();
+      }
+      const restoredDb = await openDatabase();
+      const restored = new BrainService(restoredDb, undefined, path.join(root, randomUUID()));
+      try {
+        expect(await restoreBundle(restored, owner, file)).toMatchObject({ sources: 2 });
+        const detail = await restored.sourceDetail(owner, (await restored.sources(owner))[0].id);
+        const attachment = await restored.attachment(owner, String(detail.attachments[0].id));
+        expect(await readFile(attachment.file)).toEqual(media);
+        expect(detail.metadata?.note_id).toBeTruthy();
+        expect(
+          (await restored.search(owner, { query: 'LabNeedle' })).passages.length,
+        ).toBeGreaterThan(0);
+      } finally {
+        await restoredDb.close();
+      }
+    },
+  );
   it('supports disk uploads and authenticated preview/download routes while denying readers upload access', async () => {
     const app = createApp(service, {
       assistant: 'writer-key',

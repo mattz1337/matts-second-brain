@@ -40,6 +40,7 @@ import {
 import type { Embeddings } from './embeddings.js';
 import { config } from './config.js';
 import { CategoryService } from './category-service.js';
+import { sourceDocument } from './source-document.js';
 import path from 'node:path';
 import { mkdir, readFile, writeFile, stat } from 'node:fs/promises';
 import {
@@ -1269,11 +1270,22 @@ export class BrainService {
     scope(actor, 'brain:read');
     const source = await one<Source>(this.db, 'SELECT * FROM sources WHERE id=$1', [id]);
     requireCondition(source, 404, 'not_found', 'Source not found.');
-    const revisions = await rows<Record<string, unknown>>(
+    const revisionRows = await rows<{
+      id: string;
+      content_hash: string;
+      text: string;
+      observed_at: string;
+      parser: string;
+      original_base64: string | null;
+    }>(
       this.db,
-      'SELECT id,content_hash,text,observed_at,parser FROM revisions WHERE source_id=$1 ORDER BY observed_at DESC',
+      'SELECT id,content_hash,text,observed_at,parser,original_base64 FROM revisions WHERE source_id=$1 ORDER BY observed_at DESC,id DESC',
       [id],
     );
+    const revisions = revisionRows.map(({ original_base64, ...revision }) => ({
+      ...revision,
+      document: sourceDocument(revision.parser, original_base64),
+    }));
     const passages = await rows<Record<string, unknown>>(
       this.db,
       'SELECT p.* FROM passages p JOIN revisions r ON r.id=p.revision_id WHERE r.source_id=$1 ORDER BY r.observed_at DESC,p.start_offset',
@@ -1524,7 +1536,7 @@ export class BrainService {
     );
     const allNodes = await rows<{ id: string; type: GraphNode['type']; label: string }>(
       this.db,
-      'SELECT * FROM nodes',
+      "SELECT * FROM nodes WHERE type <> 'import_collection'",
     );
     const relations = await rows<GraphEdge>(
       this.db,
@@ -1853,7 +1865,7 @@ export class BrainService {
         ).toString('base64');
     }
     return {
-      format: 'commonplace-export',
+      format: 'orbit-export',
       version: 2,
       exported_at: new Date().toISOString(),
       data,
@@ -1869,12 +1881,12 @@ export class BrainService {
       files?: Record<string, string>;
     };
     requireCondition(
-      archive?.format === 'commonplace-export' &&
+      ['orbit-export', 'commonplace-export'].includes(archive?.format || '') &&
         [1, 2].includes(archive.version || 0) &&
         archive.data,
       400,
       'invalid_export',
-      'Use a Commonplace v1/v2 export or ZIP backup.',
+      'Use an Orbit v1/v2 export or ZIP backup.',
     );
     const count = await one<{ n: number }>(this.db, 'SELECT count(*)::int AS n FROM nodes');
     requireCondition(
@@ -2070,6 +2082,7 @@ export class BrainService {
       );
       for (const p of passages)
         await this.index(q, p.id, p.title, p.text, [...p.tags, p.project].join(' '), true);
+      await this.classification.retireImportedCollections(q);
       const classified = await rows<{ id: string }>(
         q,
         "SELECT id FROM nodes WHERE type IN ('claim','note','source')",
@@ -2201,7 +2214,7 @@ export class BrainService {
     scope(actor, 'brain:read');
     return rows<{ id: string; canonical: string; label: string; type: string; aliases: string[] }>(
       this.db,
-      'SELECT e.*,n.label FROM entities e JOIN nodes n ON n.id=e.id ORDER BY e.canonical',
+      "SELECT e.*,n.label FROM entities e JOIN nodes n ON n.id=e.id WHERE n.type <> 'import_collection' ORDER BY e.canonical",
     );
   }
   async entityMerges(actor: Actor) {
