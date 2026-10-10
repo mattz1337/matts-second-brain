@@ -317,12 +317,26 @@ test('globe respects reduced motion and keeps knowledge accessible when WebGL is
   await expect(canvas).toBeVisible();
   await expect(page.locator('.full-graph .globe-stage')).toHaveAttribute('data-ready', 'true');
   await page.evaluate(() => document.fonts.ready);
-  await page.waitForTimeout(500);
-  const first = await canvas.screenshot();
+  // Initial resize/data updates may arrive after the first rendered frame on
+  // software-rendered CI browsers. Require consecutive stable frames first.
+  let previous: Buffer | null = null;
+  let stableFrames = 0;
+  await expect
+    .poll(
+      async () => {
+        const current = await canvas.screenshot();
+        stableFrames = previous && current.equals(previous) ? stableFrames + 1 : 0;
+        previous = current;
+        return stableFrames;
+      },
+      { timeout: 15000, intervals: [300] },
+    )
+    .toBeGreaterThanOrEqual(2);
+  const first = previous!;
   await page.waitForTimeout(300);
   expect((await canvas.screenshot()).equals(first)).toBe(true);
   await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
-  expect((await canvas.screenshot()).equals(first)).toBe(false);
+  await expect.poll(async () => (await canvas.screenshot()).equals(first)).toBe(false);
   await canvas.dispatchEvent('webglcontextlost');
   await expect(page.getByRole('columnheader', { name: 'Connections' })).toBeVisible();
   await page.getByRole('button', { name: 'Globe', exact: true }).click();

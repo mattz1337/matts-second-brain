@@ -22,7 +22,7 @@ The [publishing workflow](../.github/workflows/container.yml) tests the backend,
 
 Successful `main` pushes publish `edge` and `sha-<full-commit-hash>`. Publishing a GitHub release such as `v0.2.0` publishes `0.2.0`; its version must match `package.json`. The NAS updater resolves and stores the image digest for the actual installation. `edge` is for development. The workflow never connects to your NAS.
 
-After the first publication, open [the Orbit package](https://github.com/users/mattz1337/packages/container/package/orbit) → **Package settings → Change visibility → Public**. This is a one-time GitHub setting: public source repositories do not make new container packages public automatically. Public NAS pulls need no registry login. For a private package, authenticate the NAS with a classic token limited to `read:packages`; never put it in Compose or Git.
+After the first publication, check [the Orbit package](https://github.com/users/mattz1337/packages/container/package/orbit) is public. If needed, use **Package settings → Change visibility → Public** once; an already public package needs no change. A public source repository does not guarantee public package visibility. Public NAS pulls need no registry login. For a private package, authenticate the NAS with a classic token limited to `read:packages`; never put it in Compose or Git. Anonymous manifest access to `0.2.0` was verified after publication.
 
 Generate the owner password hash on your computer:
 
