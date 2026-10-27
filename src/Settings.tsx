@@ -23,6 +23,7 @@ import './assistant.css';
 
 interface Integrations {
   endpoint: string;
+  access_mode?: 'local' | 'password';
   assistant_token: string;
   reader_token: string;
   tools: { name: string; description: string; scope: string }[];
@@ -137,7 +138,11 @@ export default function Settings({ onChanged }: { onChanged: () => void }) {
             <p>Search your knowledge and contribute from an assistant or another app.</p>
           </div>
           <Badge tone="green">
-            {integrations.data?.endpoint.startsWith('https:') ? 'Protected access' : 'Local access'}
+            {integrations.data?.endpoint.startsWith('https:')
+              ? 'Protected access'
+              : integrations.data?.access_mode === 'password'
+                ? 'LAN HTTP access'
+                : 'Local access'}
           </Badge>
         </div>
         {integrations.loading && !integrations.data ? (

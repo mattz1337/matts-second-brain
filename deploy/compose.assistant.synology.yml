@@ -7,10 +7,11 @@ services:
     init: true
     restart: unless-stopped
     user: '${APP_UID:-1000}:${APP_GID:-1000}'
-    ports: ['127.0.0.1:${APP_PORT:-4310}:4310']
+    ports: ['${APP_BIND_IP:-127.0.0.1}:${APP_PORT:-4310}:4310']
     environment:
       ACCESS_MODE: password
-      APP_ORIGIN: '${APP_ORIGIN:?Set the HTTPS origin}'
+      APP_ORIGIN: '${APP_ORIGIN:?Set the app origin}'
+      ALLOW_LAN_HTTP: '${ALLOW_LAN_HTTP:-false}'
       OWNER_PASSWORD_HASH_FILE: /run/secrets/owner-password.json
       DATA_DIR: /data
       HOST: 0.0.0.0

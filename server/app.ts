@@ -52,7 +52,7 @@ export function createApp(
     httpOnly: true,
     sameSite: 'strict' as const,
     path: '/',
-    secure: access.mode === 'password',
+    secure: access.mode === 'password' && new URL(access.publicOrigin!).protocol === 'https:',
   };
   app.get('/api/session', (req, res) => {
     const token = String(req.cookies?.orbit_session || '');
@@ -364,6 +364,7 @@ export function createApp(
     scope(req.actor, 'brain:admin');
     res.json({
       endpoint: `${access.publicOrigin || `http://127.0.0.1:${port}`}/mcp`,
+      access_mode: access.mode,
       assistant_token: keys.assistant,
       reader_token: keys.reader,
       tools: Object.entries(toolDefinitions).map(([name, d]) => ({

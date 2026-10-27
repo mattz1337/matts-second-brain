@@ -11,7 +11,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { api } from './api';
+import { api, key } from './api';
 import { useResource } from './hooks';
 import { Badge, Modal } from './components';
 import DocumentContent from './DocumentContent';
@@ -228,7 +228,7 @@ export default function Assistant({
       setRevision((v) => v + 1);
       await streamMessage(
         conversation,
-        { content: question, request_id: crypto.randomUUID(), scope, cloud, general },
+        { content: question, request_id: key(), scope, cloud, general },
         abort.signal,
         (type, data) => {
           if (generation.current !== current) return;

@@ -39,7 +39,9 @@ await writeFile(
   // The enclosing temporary directory remains private.
   { mode: 0o644 },
 );
-const origin = 'https://brain.container.test';
+const lanHttp = process.argv.includes('--lan-http');
+const origin = lanHttp ? 'http://192.168.178.124:4310' : 'https://brain.container.test';
+const publicHost = new URL(origin).host;
 let base, cookie, reader;
 let upstreamBase;
 // Emulate DSM forwarding the public Host header. Node fetch derives Host from
@@ -49,7 +51,7 @@ const proxy = createServer((req, res) => {
     `${upstreamBase}${req.url}`,
     {
       method: req.method,
-      headers: { ...req.headers, host: 'brain.container.test' },
+      headers: { ...req.headers, host: publicHost },
     },
     (incoming) => {
       res.writeHead(incoming.statusCode, incoming.headers);
@@ -66,7 +68,7 @@ async function request(route, { body, token, unauthenticated = false, ...options
   return fetch(`${base}${route}`, {
     ...options,
     headers: {
-      Host: 'brain.container.test',
+      Host: publicHost,
       Origin: origin,
       ...(body ? { 'Content-Type': 'application/json' } : {}),
       ...(!unauthenticated && cookie ? { Cookie: cookie } : {}),
@@ -93,7 +95,8 @@ async function login() {
   });
   assert.equal(response.status, 200);
   const value = response.headers.get('set-cookie');
-  assert.match(value, /Secure/);
+  if (lanHttp) assert.doesNotMatch(value, /;\s*Secure(?:;|$)/);
+  else assert.match(value, /Secure/);
   assert.match(value, /HttpOnly/);
   assert.match(value, /SameSite=Strict/);
   cookie = value.split(';')[0];
@@ -113,8 +116,6 @@ try {
     'ALL',
     '--security-opt',
     'no-new-privileges:true',
-    '--cpus',
-    '2',
     '--memory',
     '2g',
     '-p',
@@ -126,6 +127,8 @@ try {
     '-e',
     `APP_ORIGIN=${origin}`,
     '-e',
+    `ALLOW_LAN_HTTP=${lanHttp ? 'true' : 'false'}`,
+    '-e',
     'OWNER_PASSWORD_HASH_FILE=/run/secrets/owner-password.json',
     '-e',
     'EMBEDDINGS=lexical',
@@ -136,7 +139,7 @@ try {
   await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${proxy.address().port}`;
   await ready();
-  console.log('Container ready through the reverse proxy.');
+  console.log(`Container ready with ${lanHttp ? 'explicit LAN HTTP' : 'HTTPS-origin'} access.`);
   assert.equal((await request('/', { unauthenticated: true })).status, 200);
   assert.equal((await request('/api/dashboard', { unauthenticated: true })).status, 401);
   assert.equal(
@@ -200,7 +203,7 @@ try {
     await client.connect(
       new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
         requestInit: {
-          headers: { Host: 'brain.container.test', Authorization: `Bearer ${reader}` },
+          headers: { Host: publicHost, Authorization: `Bearer ${reader}` },
         },
       }),
     );

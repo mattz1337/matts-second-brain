@@ -100,7 +100,8 @@ Copy `.env.example` to `.env` if you want to change defaults. Credentials and kn
 | `PORT`                     | `4310`                         | Local API / built web app port; Vite's development proxy expects this default              |
 | `HOST`                     | `127.0.0.1`                    | Listening address; the container uses `0.0.0.0` with password mode                         |
 | `ACCESS_MODE`              | `local`                        | `local` for loopback-only desktop use; `password` for NAS/server access                    |
-| `APP_ORIGIN`               | unset                          | Exact HTTPS origin required in password mode, also used for the advertised MCP URL         |
+| `APP_ORIGIN`               | unset                          | Exact app origin in password mode; HTTPS by default, also used for the advertised MCP URL  |
+| `ALLOW_LAN_HTTP`           | `false`                        | Explicit HTTP opt-in for password mode on a private IPv4 literal; see the NAS guide        |
 | `OWNER_PASSWORD_HASH_FILE` | unset                          | Mounted scrypt hash generated with `npm run auth:password`; required in password mode      |
 | `TRUST_PROXY`              | unset                          | Optional comma-separated trusted proxy IPs/CIDRs; forwarded headers ignored by default     |
 | `DATA_DIR`                 | `.data`                        | Persistent PostgreSQL data, attachments, temporary uploads, credentials, and cached models |
@@ -287,7 +288,7 @@ The API process runs a background loop every second for import jobs, pending sea
 
 Under the configured `DATA_DIR`, `postgres/` holds the persistent PGlite database, `files/` holds disk-backed uploads and content-addressed attachments, `models/` caches downloaded model weights, and `credentials.json` holds local credentials. Appearance preferences stay in browser `localStorage`. Portable ZIP backups contain a database-record manifest and attachments; restore targets an empty workspace and rebuilds derived indexes. One API process must own a given data directory.
 
-The browser obtains an HttpOnly, SameSite session cookie for the owner. Desktop local mode stays restricted to loopback. NAS/password mode requires an HTTPS origin and a mounted scrypt password hash, uses Secure cookies with server-side expiry and logout revocation, and rejects unexpected Host/Origin headers. MCP uses separate read-only and read/contribute bearer tokens. Scope checks are enforced in application services as well as relevant routes: ordinary assistant tokens can propose knowledge but cannot verify claims, override owner category decisions, or physically delete data. This is a single-owner application; password mode does not add multi-user isolation or OAuth.
+The browser obtains an HttpOnly, SameSite session cookie for the owner. Desktop local mode stays restricted to loopback. NAS/password mode requires a mounted scrypt password hash and HTTPS by default, with Secure cookies, server-side expiry and logout revocation, and strict Host/Origin checks. An explicit private-IPv4 LAN HTTP option retains password login and session checks while permitting non-Secure cookies; see the [direct LAN setup](docs/synology.md#direct-lan-access-by-nas-ip-and-port) for transport limitations and port binding. MCP uses separate read-only and read/contribute bearer tokens. Scope checks are enforced in application services as well as relevant routes: ordinary assistant tokens can propose knowledge but cannot verify claims, override owner category decisions, or physically delete data. This is a single-owner application; password mode does not add multi-user isolation or OAuth.
 
 ## Spike limits
 

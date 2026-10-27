@@ -14,9 +14,34 @@ flowchart LR
   Secret["Read-only password hash file"] --> Container
 ```
 
-The container listens on `0.0.0.0` internally; its published host port is bound to `127.0.0.1`, so browsers use the DSM reverse proxy. Password mode replaces the desktop's automatic owner login. Sessions are random, stored as hashes in process memory, expire after eight hours, and are revoked on logout. Restarting the container signs browsers out; persistent MCP credentials survive. Login attempts are limited. The owner password never becomes an MCP token.
+The container listens on `0.0.0.0` internally; by default its published host port is bound to `127.0.0.1`, so browsers use the DSM reverse proxy. Direct LAN access uses the explicit configuration below. Password mode replaces the desktop's automatic owner login. Sessions are random, stored as hashes in process memory, expire after eight hours, and are revoked on logout. Restarting the container signs browsers out; persistent MCP credentials survive. Login attempts are limited. The owner password never becomes an MCP token.
 
-`APP_ORIGIN` must be the exact HTTPS origin used by browsers, without an application path. Host and Origin checks remain enabled. HTTPS is also required by the UI's UUID and clipboard APIs. Use a certificate trusted by the devices accessing the app. A DSM reverse-proxy rule does not itself authenticate users; Orbit supplies the password login.
+`APP_ORIGIN` must be the exact origin used by browsers, without an application path. Host and Origin checks remain enabled. HTTPS is the default; use a certificate trusted by the devices accessing the app. The explicit LAN HTTP option below supports direct private-IP access. A DSM reverse-proxy rule does not itself authenticate users; Orbit supplies the password login.
+
+## Direct LAN access by NAS IP and port
+
+An image containing LAN HTTP support can serve the app directly, without a hostname, certificate or reverse proxy. The earlier assistant image `sha-81a62c82588f7d7e38e9b3eb5586e8917114dfe8` predates this option. First update to a tested LAN-capable image using the existing updater; then use the current Compose template and set these `.env` values, substituting your NAS's private IPv4 address:
+
+```dotenv
+APP_ORIGIN=http://192.168.1.50:4310
+APP_BIND_IP=192.168.1.50
+APP_PORT=4310
+ALLOW_LAN_HTTP=true
+```
+
+Recreate the service with the same Compose project name and existing data/password mounts. For the first-install wizard's default directory:
+
+```sh
+cd /volume1/docker/orbit
+sudo docker compose -p orbit --env-file .env -f compose.synology.yml up -d
+sudo docker compose -p orbit --env-file .env -f compose.synology.yml ps
+```
+
+Open `http://NAS_IP:4310`. Owner login, session expiry/revocation, request Host/Origin checks and scoped MCP tokens remain active. HTTPS configurations retain Secure cookies; the explicit HTTP mode uses HttpOnly, SameSite=Strict cookies without Secure so browsers can retain the login. Capture and Assistant request IDs use a cryptographic UUID fallback because browsers do not expose `randomUUID()` on ordinary HTTP origins. Clipboard buttons may require manual copying. [Browser crypto availability](https://developer.mozilla.org/en-US/docs/Web/API/Crypto/getRandomValues).
+
+HTTP transmits passwords and knowledge without transport encryption. Limit access to trusted LAN/VPN clients, permit port 4310 only for those networks in DSM, and do not forward it through the router. The opt-in accepts only RFC1918 IPv4 literal origins (10/8, 172.16/12, 192.168/16); public IPs, hostnames and loopback HTTP are rejected for server/password mode. Binding a private address is not a replacement for network firewall rules.
+
+To return to the HTTPS setup, restore the HTTPS `APP_ORIGIN`, set `APP_BIND_IP=127.0.0.1` and `ALLOW_LAN_HTTP=false`, and recreate the service. The password and collection remain in the existing mounts.
 
 ## 1. Use a published image and prepare the owner password
 
@@ -78,7 +103,7 @@ Leave `TRUST_PROXY` empty initially. This ignores forwarded client IP headers; l
 3. Check logs and container health.
 4. Open the configured HTTPS URL and sign in with the owner password.
 
-Compose requires an `APP_ORIGIN` value. The server also refuses network mode without a valid password hash and HTTPS origin. Do not switch `ACCESS_MODE` to `local` in the container. The default desktop `npm run dev` continues to use loopback-only local mode.
+Compose requires an `APP_ORIGIN` value. The server also refuses network mode without a valid password hash and a validated origin. HTTPS is required unless the explicit private-IP LAN HTTP option is enabled. Do not switch `ACCESS_MODE` to `local` in the container. The default desktop `npm run dev` continues to use loopback-only local mode.
 
 An initial model download needs outbound internet access. Cached weights remain under `data/models/`. If inference cannot load on the NAS or resource use is excessive, set `EMBEDDINGS=lexical` in `.env` and recreate the container. This preserves data and keyword search but disables semantic search and categorization. `EXTRACTION=extractive` avoids running a generative LLM on the NAS. The optional Ollama integration still requires a loopback endpoint and is not part of this deployment.
 

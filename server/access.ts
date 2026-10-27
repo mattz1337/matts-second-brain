@@ -2,14 +2,43 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { parsePasswordHash, verifyPassword, type PasswordHash } from './password.js';
 import { AppError } from './errors.js';
+import { isIP } from 'node:net';
+import ipaddr from 'ipaddr.js';
 
 export interface AccessOptions {
   mode: 'local' | 'password';
   publicOrigin?: string;
+  allowLanHttp?: boolean;
   passwordHash?: PasswordHash;
   trustProxy?: string[];
   sessionTtlMs?: number;
   now?: () => number;
+}
+export function validatePublicOrigin(value: string, allowLanHttp = false): URL {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('Password access requires an APP_ORIGIN URL.');
+  }
+  const privateHttp =
+    allowLanHttp &&
+    url.protocol === 'http:' &&
+    isIP(url.hostname) === 4 &&
+    ipaddr.parse(url.hostname).range() === 'private';
+  if (
+    (url.protocol !== 'https:' && !privateHttp) ||
+    url.username ||
+    url.password ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(
+      'APP_ORIGIN must be HTTPS, or a private IPv4 HTTP origin with ALLOW_LAN_HTTP=true, without a path, query, or credentials.',
+    );
+  }
+  return url;
 }
 export async function loadAccess(host: string, env = process.env): Promise<AccessOptions> {
   const mode = env.ACCESS_MODE || 'local';
@@ -21,22 +50,8 @@ export async function loadAccess(host: string, env = process.env): Promise<Acces
     if (env.APP_ORIGIN) throw new Error('APP_ORIGIN requires ACCESS_MODE=password.');
     return { mode };
   }
-  let url: URL;
-  try {
-    url = new URL(env.APP_ORIGIN || '');
-  } catch {
-    throw new Error('Password access requires APP_ORIGIN=https://your-app-hostname.');
-  }
-  if (
-    url.protocol !== 'https:' ||
-    url.username ||
-    url.password ||
-    url.pathname !== '/' ||
-    url.search ||
-    url.hash
-  ) {
-    throw new Error('APP_ORIGIN must be an HTTPS origin without a path, query, or credentials.');
-  }
+  const allowLanHttp = env.ALLOW_LAN_HTTP === 'true';
+  const url = validatePublicOrigin(env.APP_ORIGIN || '', allowLanHttp);
   if (!env.OWNER_PASSWORD_HASH_FILE)
     throw new Error('OWNER_PASSWORD_HASH_FILE is required for password access.');
   const passwordHash = parsePasswordHash(
@@ -45,6 +60,7 @@ export async function loadAccess(host: string, env = process.env): Promise<Acces
   return {
     mode,
     publicOrigin: url.origin,
+    allowLanHttp,
     passwordHash,
     trustProxy:
       env.TRUST_PROXY?.split(',')
@@ -61,7 +77,9 @@ export class BrowserSessions {
   readonly ttl: number;
   constructor(public options: AccessOptions) {
     if (options.mode === 'password' && (!options.passwordHash || !options.publicOrigin))
-      throw new Error('Password access needs a password hash and HTTPS public origin.');
+      throw new Error('Password access needs a password hash and public origin.');
+    if (options.mode === 'password')
+      validatePublicOrigin(options.publicOrigin!, options.allowLanHttp);
     this.now = options.now || Date.now;
     this.ttl = options.sessionTtlMs ?? 8 * 60 * 60 * 1000;
   }

@@ -48,7 +48,9 @@ export function localGuard(port: number, access: AccessOptions = { mode: 'local'
       const allowed = publicUrl
         ? new Set([
             publicUrl.host,
-            `${publicUrl.hostname}:443`,
+            ...(publicUrl.port
+              ? []
+              : [`${publicUrl.hostname}:${publicUrl.protocol === 'https:' ? 443 : 80}`]),
             `127.0.0.1:${port}`,
             `localhost:${port}`,
           ]).has((req.get('host') || '').toLowerCase())
