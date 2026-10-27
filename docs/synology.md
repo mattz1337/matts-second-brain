@@ -1,6 +1,6 @@
 # Synology DS423+ deployment
 
-Target: DS423+, DSM 7.2.2-72806 Update 9, 6 GB installed RAM, LAN/VPN access. The image targets `linux/amd64`. One container serves the built web app, REST/MCP endpoints, PGlite, and background workers. The globe renders on the client. Start with the Compose limits of two CPU cores, two inference threads, and 2 GB container memory; these are initial budgets, not measured NAS requirements.
+Target: DS423+, DSM 7.2.2-72806 Update 9, 6 GB installed RAM, LAN/VPN access. The image targets `linux/amd64`. One container serves the built web app, REST/MCP endpoints, PGlite, and background workers. The globe renders on the client. The template sets two local inference threads and 2 GB container memory; these are initial budgets, not measured NAS requirements. It does not request a Docker CPU quota: the target NAS reported that its kernel lacks the required CFS scheduler/cgroup support. The inference thread setting is not a CPU ceiling for the whole application.
 
 Assistant-enabled builds also support optional OpenRouter conversations. To connect an existing Garmin stack through a separate read-only companion, use the [assistant/Garmin deployment extension](synology-assistant.md) after completing this base setup.
 
@@ -93,6 +93,24 @@ An initial model download needs outbound internet access. Cached weights remain 
 Use the portable application backup to move between Windows and Linux instead of copying a running physical database. The password hash and MCP credentials are deployment secrets, not part of the portable knowledge backup. New NAS storage generates new MCP tokens; configure clients using the NAS Settings endpoint and tokens. Existing clients may continue to use the desktop instance until you intentionally switch them, but changes made in both instances will not synchronize.
 
 ## Maintenance and validation
+
+### Recover from an unsupported CPU quota
+
+If an older Compose template fails during container creation with `NanoCPUs can not be set` and a message about the CPU CFS scheduler/cgroup, remove its `cpus` property. This is a host-side Compose setting; the existing image and password hash can be reused. Docker documents `--cpus` as a CFS quota/period constraint. [Docker CPU constraints](https://docs.docker.com/engine/containers/resource_constraints/#cpu).
+
+For the first-install wizard's default project, run on the NAS:
+
+```sh
+cd /volume1/docker/orbit
+sudo cp compose.synology.yml compose.synology.yml.before-cpu-fix
+sudo sed -i '/^[[:space:]]*cpus:/d' compose.synology.yml
+sudo docker compose -p orbit --env-file .env -f compose.synology.yml up -d
+sudo docker compose -p orbit --env-file .env -f compose.synology.yml ps
+```
+
+Use `docker-compose` instead of `docker compose` if that is the available CLI. The wizard has already written `.env` and the password hash at this point; continue from the existing project instead of rerunning the first-install wizard. Once healthy, sign in and restore the desktop backup before creating notes or chats. The 2 GB memory setting and two inference threads remain in effect.
+
+### Image updates
 
 ```mermaid
 flowchart LR

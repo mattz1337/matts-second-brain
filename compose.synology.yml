@@ -34,7 +34,7 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    cpus: '2.0'
+    # Some DSM kernels lack CFS CPU quota support. Bound local inference threads instead.
     mem_limit: 2g
     stop_grace_period: 150s
     logging:
