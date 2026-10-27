@@ -1,0 +1,75 @@
+# Assistant-enabled Orbit + the existing Garmin chat image. Use as the project's
+# single compose.synology.yml; retain existing .env, data and password mounts.
+services:
+  orbit:
+    image: '${ORBIT_IMAGE:?Set an image built from the assistant-enabled Orbit code}'
+    platform: linux/amd64
+    init: true
+    restart: unless-stopped
+    user: '${APP_UID:-1000}:${APP_GID:-1000}'
+    ports: ['127.0.0.1:${APP_PORT:-4310}:4310']
+    environment:
+      ACCESS_MODE: password
+      APP_ORIGIN: '${APP_ORIGIN:?Set the HTTPS origin}'
+      OWNER_PASSWORD_HASH_FILE: /run/secrets/owner-password.json
+      DATA_DIR: /data
+      HOST: 0.0.0.0
+      PORT: '4310'
+      SEED_DEMO: 'false'
+      EMBEDDINGS: '${EMBEDDINGS:-local}'
+      EMBEDDING_THREADS: '2'
+      EXTRACTION: extractive
+      TRUST_PROXY: '${TRUST_PROXY:-}'
+      TZ: Europe/Berlin
+      GARMIN_CONNECTOR_URL: http://garmin-bridge:8082
+      GARMIN_CONNECTOR_TOKEN_FILE: /run/secrets/garmin-bridge.json
+    volumes:
+      - '${DATA_PATH:-/volume1/docker/orbit/data}:/data'
+      - '${PASSWORD_HASH_PATH:-/volume1/docker/orbit/secrets/owner-password.json}:/run/secrets/owner-password.json:ro'
+      - '${GARMIN_BRIDGE_TOKEN_PATH:?Set the private bridge token path}:/run/secrets/garmin-bridge.json:ro'
+    networks: [default, garmin_data]
+    read_only: true
+    tmpfs: ['/tmp:rw,nosuid,nodev,size=128m']
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    cpus: '2.0'
+    mem_limit: 2g
+    stop_grace_period: 150s
+    logging: { driver: json-file, options: { max-size: '10m', max-file: '3' } }
+  garmin-bridge:
+    image: '${GARMIN_CHAT_IMAGE:?Set the image of the existing Garmin chat container}'
+    init: true
+    restart: unless-stopped
+    user: '65534:65534'
+    group_add: ['${APP_GID:-1000}']
+    entrypoint: [python, /orbit-bridge.py]
+    environment:
+      BRIDGE_STATE: /bridge-state
+      CHAT_INFLUXDB_URL: '${GARMIN_INFLUX_URL:-http://influxdb:8086}'
+    volumes_from:
+      ['container:${GARMIN_CHAT_CONTAINER:?Set the existing Garmin chat container name}:ro']
+    volumes:
+      - '${GARMIN_BRIDGE_SCRIPT_PATH:-./garmin_bridge.py}:/orbit-bridge.py:ro'
+      - '${GARMIN_BRIDGE_TOKEN_PATH:?Set the private bridge token path}:/run/secrets/garmin-bridge.json:ro'
+    networks: [garmin_data]
+    read_only: true
+    tmpfs: ['/bridge-state:rw,nosuid,nodev,uid=65534,gid=65534,size=128m']
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    mem_limit: 384m
+    healthcheck:
+      test:
+        [
+          CMD,
+          python,
+          '-c',
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/healthz',timeout=3)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: { driver: json-file, options: { max-size: '10m', max-file: '3' } }
+networks:
+  garmin_data:
+    external: true
+    name: '${GARMIN_NETWORK:?Set the existing Garmin data network name}'

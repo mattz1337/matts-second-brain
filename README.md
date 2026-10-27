@@ -1,6 +1,6 @@
 # Orbit — Matt's Second Brain
 
-A working personal knowledge spike: capture notes, import documents, inspect cited claims, review evidence, search by meaning, and explore the knowledge graph. A private web app and MCP share the same persistent application services.
+A working personal knowledge spike: capture notes, import documents, inspect cited claims, review evidence, search by meaning, explore the knowledge graph, and ask a conversational assistant. A private web app and MCP share the same persistent application services.
 
 ## Run locally
 
@@ -45,6 +45,8 @@ Main flows include guarded drafts and a keyboard save shortcut, URL-restored sea
 - Review candidates individually or in batches. Acceptance and substantive verification remain separate. Evidence support/challenge, independent source lineages, stale verification, conflicts, and supersession are visible.
 - Search PostgreSQL full-text and real pgvector embeddings, fuse ranks, and optionally expand explicit graph connections. English and German paraphrase checks use the actual local model.
 - Ask for a cited evidence digest; insufficient relevant knowledge is reported as a gap.
+- **Assistant:** saved conversations, streamed OpenRouter answers, clickable citations and explicit note/edit/import action cards. Select Knowledge, Garmin or Both; Cloud AI is off by default. Without a model, local evidence search still works. [Setup and architecture](docs/assistant.md).
+- Read-only connection to the existing Garmin app, with local metric calculations, comparisons, charts and retained snapshots. Optional Graphify corpus export and reviewed cross-note relationship import. [Garmin and Graphify workflows](docs/assistant.md#connect-the-existing-garmin-project), [NAS companion setup](docs/synology-assistant.md).
 - Animated Three.js knowledge globe with glowing nodes, flowing connection arcs, drag/zoom, smooth node flights, motion controls, topic filters, and an accessible list view. Selecting a note or source opens a reading preview beside the graph. **Fullscreen** expands the graph and preview; Escape returns to the page. Merge duplicate named entities and undo merges.
 - Versioned edits and review history, archival/restoration, item/source deletion, portable export, and empty-workspace restore with search-index rebuilding.
 - Fourteen typed MCP tools over stateless Streamable HTTP, plus a stdio bridge. Read-only and contribution tokens are separate; assistants cannot review/verify or physically delete data.
@@ -146,7 +148,7 @@ Adjust absolute paths for another checkout. Alternatively provide `BRAIN_MCP_TOK
 ## Verify
 
 ```powershell
-npm.cmd test
+npm.cmd run test:isolated
 npm.cmd run test:semantic
 npm.cmd run test:e2e
 ```
@@ -167,7 +169,7 @@ Orbit is a local TypeScript application with one API process owning an embedded 
 
 ```mermaid
 flowchart TB
-  Browser["Browser<br/>React 19 + TypeScript<br/>Library, review, Three.js globe"]
+  Browser["Browser<br/>React 19 + TypeScript<br/>Assistant, library, review, globe"]
   Client["MCP client<br/>Assistant or external app"]
   Bridge["Optional stdio bridge<br/>server/stdio.ts"]
 
@@ -176,6 +178,7 @@ flowchart TB
     MCP["MCP Streamable HTTP<br/>/mcp"]
     Auth["Owner session / scoped MCP tokens<br/>Actor and scope checks"]
     Service["BrainService + CategoryService<br/>Knowledge, evidence, graph, review"]
+    Assistant["Assistant service<br/>Saved chats, scoped tools, proposed actions"]
     Worker["Background work loop<br/>Imports, indexing, categorization"]
     Model["Transformers.js<br/>Local multilingual E5 inference"]
     DB[("PGlite PostgreSQL + pgvector<br/>Records, graph, search index, jobs")]
@@ -183,6 +186,8 @@ flowchart TB
 
   Files["Local filesystem<br/>Original attachments, uploads,<br/>model cache, credentials"]
   Ollama["Optional local Ollama<br/>Claim extraction"]
+  Cloud["Optional OpenRouter<br/>Explicit cloud context"]
+  Garmin["Read-only Garmin bridge<br/>Local calculations + snapshots"]
 
   Browser -->|"Session cookie · REST"| REST
   Client -->|"Bearer token · HTTP"| MCP
@@ -191,6 +196,11 @@ flowchart TB
   REST --> Auth
   MCP --> Auth
   Auth --> Service
+  Auth --> Assistant
+  Assistant --> Service
+  Assistant --> DB
+  Assistant <--> Cloud
+  Assistant --> Garmin
   Service --> DB
   Service --> Files
   Service -->|"Query and category embeddings"| Model
@@ -285,7 +295,7 @@ React/TypeScript/Vite + Three.js, an Express/TypeScript backend, filesystem-pers
 
 The spike uses one application process with durable database jobs instead of Python/FastAPI, Celery/Redis, and a separate PostgreSQL service. Desktop mode binds to loopback; the optional NAS deployment adds password access behind an HTTPS reverse proxy. Both modes reject hostile Host/Origin headers and protect MCP with scoped bearer tokens. There is no OAuth deployment, multi-user isolation, or high availability.
 
-Default extraction proposes exact source sentences, and ask mode returns an evidence digest. Optional Ollama extraction validates schema and cited quotes but still needs human review; that optional provider is not part of the automated live-model verification. Scanned PDF OCR, complex-table fidelity, free-form answer generation, connector sync, automated revalidation, background backup management, and the PRD's large-corpus performance/quality gates remain follow-up work.
+Default extraction proposes exact source sentences, and search's ask mode returns an evidence digest. The separate Assistant page supports optional OpenRouter generation with scoped retrieval and explicit write proposals; Garmin calculations remain local. Optional Ollama extraction validates schema and cited quotes but still needs human review. Scanned PDF OCR, complex-table fidelity, automatic connector synchronization, automated revalidation, background backup management, and the PRD's large-corpus performance/quality gates remain follow-up work. Graphify extraction is an external step with an implemented export/import/review adapter.
 
 Restore imports a JSON archive into an empty workspace and replays tombstones present in the workspace/archive. Previously downloaded exports can still contain forgotten knowledge. Keep the newest deletion history with backups; the spike cannot retroactively erase independent export files. Import limits are 25 MB/file, 200 PDF pages, and 500,000 parsed characters; JSON restore requests are capped at 50 MB.
 
@@ -295,3 +305,5 @@ Restore imports a JSON archive into an empty workspace and replays tombstones pr
 - [Draft PRD](docs/prd.md)
 - [Spike implementation, validation, and next decisions](docs/spike.md)
 - [Synology DS423+ installation, migration, and database inspection](docs/synology.md)
+- [Assistant, Garmin, Graphify, configuration, and architecture](docs/assistant.md)
+- [Assistant/Garmin companion deployment on Synology](docs/synology-assistant.md)

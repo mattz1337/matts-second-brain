@@ -35,7 +35,8 @@ jobs:
           cache: npm
       - run: npm run setup
       - run: npx playwright install --with-deps chromium
-      - run: npm test
+      - run: npm run test:isolated
+      - run: python -m unittest discover -s connectors/tests
       - run: npm run test:e2e
       - run: npm run build:server
       - run: npm run test:nas-update

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { randomBytes, scrypt } from 'node:crypto';
+import { randomBytes, randomUUID, scrypt } from 'node:crypto';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createServer, request as forward } from 'node:http';
@@ -161,10 +161,40 @@ try {
   });
   assert.equal(captured.status, 201);
   const knowledge = await captured.json();
+  assert.equal((await request('/api/assistant/config', { unauthenticated: true })).status, 401);
+  const assistantConfig = await (await request('/api/assistant/config')).json();
+  assert.equal(assistantConfig.provider, 'builtin');
+  assert.equal(Object.hasOwn(assistantConfig, 'api_key'), false);
+  const conversation = await (
+    await request('/api/assistant/conversations', { method: 'POST', body: {} })
+  ).json();
+  const response = await request(`/api/assistant/conversations/${conversation.id}/messages`, {
+    method: 'POST',
+    body: {
+      content: 'Container persistence',
+      request_id: randomUUID(),
+      scope: 'knowledge',
+      cloud: false,
+      general: false,
+    },
+  });
+  assert.equal(response.status, 200);
+  const events = await response.text();
+  assert.match(events, /event: result/);
+  assert.match(events, /Container persistence observation/);
+  assert.equal(
+    (await (await request(`/api/assistant/conversations/${conversation.id}`)).json()).length,
+    2,
+  );
+  console.log('Owner-only local assistant and persisted SSE conversation verified.');
   const integrations = await (await request('/api/integrations')).json();
   assert.equal(integrations.endpoint, `${origin}/mcp`);
   reader = integrations.reader_token;
   assert.equal(typeof reader, 'string');
+  assert.equal(
+    (await request('/api/assistant/config', { token: reader, unauthenticated: true })).status,
+    403,
+  );
   const client = new Client({ name: 'container-check', version: '1' });
   try {
     await client.connect(
@@ -291,6 +321,10 @@ try {
   }
   await login();
   assert.equal(
+    (await (await request(`/api/assistant/conversations/${conversation.id}`)).json()).length,
+    2,
+  );
+  assert.equal(
     (await (await request(`/api/knowledge/${knowledge.id}`)).json()).title,
     'Container persistence observation',
   );
@@ -302,7 +336,7 @@ try {
   await request('/api/session', { method: 'DELETE' });
   assert.equal((await request('/api/dashboard')).status, 401);
   console.log(
-    'PASS: Linux image, non-root read-only runtime, login/logout, REST + scoped MCP, background import, backup, SQL inspection, clean shutdown, persistent data and tokens.',
+    'PASS: Linux image, non-root read-only runtime, login/logout, REST + scoped MCP, local assistant with saved SSE conversation, background import, backup, SQL inspection, clean shutdown, persistent data and tokens.',
   );
 } catch (error) {
   console.error(

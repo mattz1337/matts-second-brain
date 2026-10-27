@@ -2,6 +2,8 @@
 
 Implemented 8 October 2026. This is a working local spike, not a claim that all production gates in the [PRD](prd.md) have been met.
 
+25 October extension: [the integrated assistant](assistant.md) adds OpenRouter conversations, scoped retrieval and reviewed actions, a read-only Garmin companion, and Graphify export/import/review. The earlier baseline counts below are historical: the extension has passed 109 distinct backend checks (the 107-case suite plus two added context/configuration checks), 22 browser workflows, four Python adapter checks, and the Linux container smoke check including saved assistant conversations across restart. A real-provider check with an invented note also passed; no representative answer-quality or NAS resource benchmark is claimed.
+
 ## Architecture decision
 
 The workspace has Node.js 22.17, no installed Python interpreter, and no running Docker daemon. The implementation therefore uses TypeScript throughout and PGlite, a filesystem-persistent embedded PostgreSQL runtime. pgvector, GIN full-text indexes, explicit graph relations, source revisions, evidence, review history, and canonical durable jobs are actual database records.

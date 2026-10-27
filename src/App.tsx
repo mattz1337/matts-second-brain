@@ -22,6 +22,7 @@ import {
   Moon,
   Sun,
   LogOut,
+  Sparkles,
 } from 'lucide-react';
 import { useAppearance } from './Appearance';
 import { api, date, resetApiSession } from './api';
@@ -47,10 +48,12 @@ import Settings from './Settings';
 import EntityDetail from './Entity';
 import Login from './Login';
 import { updateLocation, useUrlState } from './navigation';
+import Assistant from './Assistant';
 
-type View = 'overview' | 'library' | 'graph' | 'sources' | 'review' | 'settings';
+type View = 'overview' | 'assistant' | 'library' | 'graph' | 'sources' | 'review' | 'settings';
 const navigation: { id: View; label: string; icon: typeof BookOpen }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'assistant', label: 'Assistant', icon: Sparkles },
   { id: 'library', label: 'Knowledge library', icon: BookOpen },
   { id: 'graph', label: 'Knowledge graph', icon: Network },
   { id: 'sources', label: 'Sources', icon: Files },
@@ -70,6 +73,7 @@ export default function App() {
   const appearance = useAppearance();
   const [view] = useUrlState<View>('view', 'overview', [
     'overview',
+    'assistant',
     'library',
     'graph',
     'sources',
@@ -607,6 +611,14 @@ export default function App() {
                     </section>
                   </div>
                 </>
+              )}
+              {view === 'assistant' && (
+                <Assistant
+                  onOpen={setDetail}
+                  onSource={setSource}
+                  onChanged={changed}
+                  onSettings={() => navigate('settings')}
+                />
               )}
               {view === 'library' && (
                 <Library

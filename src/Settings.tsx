@@ -17,6 +17,9 @@ import { api, pretty } from './api';
 import { useResource } from './hooks';
 import { SectionHeading, Badge, Loading } from './components';
 import type { ModelStatus } from '../shared/contracts';
+import AssistantSettings from './AssistantSettings';
+import GraphifySettings from './GraphifySettings';
+import './assistant.css';
 
 interface Integrations {
   endpoint: string;
@@ -82,6 +85,8 @@ export default function Settings({ onChanged }: { onChanged: () => void }) {
         title="Connections & settings"
         description="Use your knowledge from other tools. Keep your data in your hands."
       />
+      <AssistantSettings />
+      <GraphifySettings onChanged={onChanged} />
       <section className="settings-card appearance-settings">
         <div className="settings-card-heading">
           <div className="settings-icon">

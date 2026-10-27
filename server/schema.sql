@@ -95,6 +95,10 @@ DO $$ BEGIN
     INSERT INTO schema_migrations(version) VALUES(2);
   END IF;
 END $$;
+CREATE TABLE IF NOT EXISTS assistant_origins (
+  knowledge_id uuid PRIMARY KEY REFERENCES knowledge(id) ON DELETE CASCADE,
+  payload jsonb NOT NULL
+);
 CREATE TABLE IF NOT EXISTS entity_merges (
   id uuid PRIMARY KEY, from_id uuid NOT NULL, to_id uuid NOT NULL, snapshot jsonb NOT NULL,
   undone_at timestamptz, created_at timestamptz NOT NULL DEFAULT now()
@@ -127,3 +131,48 @@ CREATE TABLE IF NOT EXISTS category_decisions (
   PRIMARY KEY(node_id,category_id)
 );
 INSERT INTO schema_migrations(version) VALUES(6) ON CONFLICT DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS assistant_conversations (
+  id uuid PRIMARY KEY, title text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS assistant_runs (
+  id uuid PRIMARY KEY, conversation_id uuid REFERENCES assistant_conversations(id) ON DELETE SET NULL,
+  request_id uuid NOT NULL UNIQUE, input_hash text NOT NULL, budget_day text NOT NULL,
+  status text NOT NULL CHECK(status IN ('running','completed','failed','cancelled','interrupted')),
+  cloud boolean NOT NULL, calls integer NOT NULL DEFAULT 0, cost double precision NOT NULL DEFAULT 0,
+  reserved_cost double precision NOT NULL DEFAULT 0, reserved_calls integer NOT NULL DEFAULT 0,
+  estimated boolean NOT NULL DEFAULT false, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS assistant_one_run ON assistant_runs(conversation_id) WHERE status='running';
+CREATE TABLE IF NOT EXISTS assistant_messages (
+  id uuid PRIMARY KEY, conversation_id uuid NOT NULL REFERENCES assistant_conversations(id) ON DELETE CASCADE,
+  run_id uuid NOT NULL REFERENCES assistant_runs(id) ON DELETE CASCADE,
+  role text NOT NULL CHECK(role IN ('user','assistant')), content text NOT NULL, payload jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(run_id,role)
+);
+CREATE TABLE IF NOT EXISTS assistant_actions (
+  id uuid PRIMARY KEY, run_id uuid NOT NULL REFERENCES assistant_runs(id) ON DELETE CASCADE,
+  kind text NOT NULL, title text NOT NULL, arguments jsonb NOT NULL,
+  status text NOT NULL DEFAULT 'proposed', result jsonb, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS assistant_thread_idx ON assistant_messages(conversation_id,created_at,id);
+CREATE INDEX IF NOT EXISTS assistant_budget_idx ON assistant_runs(budget_day);
+CREATE TABLE IF NOT EXISTS graphify_proposals (
+  id uuid PRIMARY KEY, fingerprint text NOT NULL UNIQUE,
+  source_id uuid NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  target_id uuid NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  source_hash text NOT NULL, target_hash text NOT NULL,
+  relation text NOT NULL, confidence text NOT NULL, rationale text NOT NULL,
+  status text NOT NULL DEFAULT 'proposed', properties jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now(), CHECK(source_id<>target_id)
+);
+INSERT INTO schema_migrations(version) VALUES(7) ON CONFLICT DO NOTHING;
+DO $$ BEGIN
+  IF NOT EXISTS(SELECT 1 FROM schema_migrations WHERE version=8) THEN
+    ALTER TABLE assistant_runs ALTER COLUMN conversation_id DROP NOT NULL;
+    ALTER TABLE assistant_runs DROP CONSTRAINT IF EXISTS assistant_runs_conversation_id_fkey;
+    ALTER TABLE assistant_runs ADD CONSTRAINT assistant_runs_conversation_id_fkey FOREIGN KEY(conversation_id) REFERENCES assistant_conversations(id) ON DELETE SET NULL;
+    INSERT INTO schema_migrations(version) VALUES(8);
+  END IF;
+END $$;

@@ -156,6 +156,11 @@ export interface Evidence {
   source_status: string;
 }
 export interface Detail extends Knowledge {
+  assistant_origin?: {
+    citations: import('./assistant.js').AssistantCitation[];
+    model?: string;
+    stale?: boolean;
+  };
   evidence: Evidence[];
   reviews: Record<string, unknown>[];
   versions: Record<string, unknown>[];

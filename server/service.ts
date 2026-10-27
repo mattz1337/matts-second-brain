@@ -1,4 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
+import { redactAssistantSources } from './assistant-privacy.js';
 import { z } from 'zod';
 import {
   captureSchema,
@@ -185,7 +186,19 @@ export class BrainService {
       ),
     ]);
     const conflicts = await Promise.all(conflictIds.map((x) => this.enriched(this.db, x.id)));
-    return { ...item, evidence, reviews, versions, conflicts };
+    const origin = await one<{ payload: Detail['assistant_origin'] }>(
+      this.db,
+      'SELECT payload FROM assistant_origins WHERE knowledge_id=$1',
+      [id],
+    );
+    return {
+      ...item,
+      evidence,
+      reviews,
+      versions,
+      conflicts,
+      ...(origin ? { assistant_origin: origin.payload } : {}),
+    };
   }
   private async activity(q: QueryDB, action: string, title: string, id: string | null = null) {
     await q.query('INSERT INTO activity(id,knowledge_id,action,title) VALUES($1,$2,$3,$4)', [
@@ -360,14 +373,20 @@ export class BrainService {
       return response;
     });
   }
-  async addKnowledge(actor: Actor, raw: unknown) {
+  async addKnowledge(
+    actor: Actor,
+    raw: unknown,
+    committed?: (q: QueryDB, item: Knowledge) => Promise<void>,
+  ) {
     scope(actor, 'brain:write');
     const input = captureSchema.parse(raw);
     return this.idempotent(actor, 'capture', input.idempotency_key, input, async (q) => {
       const id = await this.insertKnowledge(q, input, actor.owner ? 'active' : 'candidate');
       await this.snapshot(q, id);
       await this.activity(q, 'captured', input.title, id);
-      return this.enriched(q, id);
+      const saved = await this.enriched(q, id);
+      await committed?.(q, saved);
+      return saved;
     });
   }
   async review(actor: Actor, id: string, raw: unknown) {
@@ -426,7 +445,12 @@ export class BrainService {
       return this.enriched(q, id);
     });
   }
-  async update(actor: Actor, id: string, raw: unknown) {
+  async update(
+    actor: Actor,
+    id: string,
+    raw: unknown,
+    committed?: (q: QueryDB, item: Knowledge) => Promise<void>,
+  ) {
     scope(actor, 'brain:write');
     const input = editSchema.parse(raw);
     return this.db.transaction(async (q) => {
@@ -475,7 +499,9 @@ export class BrainService {
       await this.detectConflicts(q, id);
       await this.snapshot(q, id);
       await this.activity(q, 'updated', next.title, id);
-      return this.enriched(q, id);
+      const saved = await this.enriched(q, id);
+      await committed?.(q, saved);
+      return saved;
     });
   }
   async archive(actor: Actor, id: string, expectedVersion: number, restore = false) {
@@ -544,7 +570,11 @@ export class BrainService {
       },
     );
   }
-  async importSource(actor: Actor, raw: unknown) {
+  async importSource(
+    actor: Actor,
+    raw: unknown,
+    committed?: (q: QueryDB, item: { id: string; status: string }) => Promise<void>,
+  ) {
     scope(actor, 'brain:write');
     const input = importSchema.parse(raw);
     requireCondition(
@@ -579,6 +609,7 @@ export class BrainService {
         stringify(input),
       ]);
       await this.activity(q, 'import queued', input.title);
+      await committed?.(q, { id, status: 'queued' });
       return { id, status: 'queued' };
     });
   }
@@ -1304,6 +1335,7 @@ export class BrainService {
       const source = await one<Source>(q, 'SELECT * FROM sources WHERE id=$1', [id]);
       requireCondition(source, 404, 'not_found', 'Source not found.');
       await q.query("UPDATE sources SET status='retracted' WHERE id=$1", [id]);
+      await redactAssistantSources(q, [id]);
       const affected = await rows<{ id: string }>(
         q,
         'SELECT DISTINCT e.knowledge_id AS id FROM evidence e JOIN passages p ON p.id=e.passage_id JOIN revisions r ON r.id=p.revision_id WHERE r.source_id=$1',
@@ -1740,6 +1772,7 @@ export class BrainService {
         'Knowledge changed. Refresh before deleting.',
       );
       await q.query('INSERT INTO tombstones(id) VALUES($1) ON CONFLICT DO NOTHING', [id]);
+      await redactAssistantSources(q, [id]);
       await q.query('DELETE FROM nodes WHERE id=$1', [id]);
       await q.query('DELETE FROM idempotency WHERE response::text LIKE $1', [`%${id}%`]);
       return { id, deleted: true };
@@ -1773,6 +1806,7 @@ export class BrainService {
         [id],
       );
       // Source-extracted claims are derived content: forget them too. User-authored claims lose only that evidence.
+      await redactAssistantSources(q, [id, ...affected.map((v) => v.id)]);
       for (const item of affected) {
         const k = await this.requireItem(q, item.id);
         if ((k as Raw & { derived_source_id?: string }).derived_source_id === id) {
@@ -1844,9 +1878,18 @@ export class BrainService {
       'source_attachments',
       'categorizations',
       'category_decisions',
+      'assistant_conversations',
+      'assistant_runs',
+      'assistant_messages',
+      'assistant_actions',
+      'assistant_origins',
+      'graphify_proposals',
     ];
-    const data: Record<string, unknown[]> = {};
-    for (const table of tables) data[table] = await rows(this.db, `SELECT * FROM ${table}`);
+    const data = await this.db.transaction(async (q) => {
+      const data: Record<string, unknown[]> = {};
+      for (const table of tables) data[table] = await rows(q, `SELECT * FROM ${table}`);
+      return data;
+    });
     const files: Record<string, string> = {};
     if (includeFiles) {
       const attachments = await rows<{ content_hash: string; size: number }>(
@@ -1888,7 +1931,10 @@ export class BrainService {
       'invalid_export',
       'Use an Orbit v1/v2 export or ZIP backup.',
     );
-    const count = await one<{ n: number }>(this.db, 'SELECT count(*)::int AS n FROM nodes');
+    const count = await one<{ n: number }>(
+      this.db,
+      'SELECT ((SELECT count(*) FROM nodes)+(SELECT count(*) FROM assistant_conversations))::int AS n',
+    );
     requireCondition(
       count?.n === 0,
       409,
@@ -1970,6 +2016,56 @@ export class BrainService {
         'error',
       ],
       category_decisions: ['node_id', 'category_id', 'decision', 'actor', 'updated_at'],
+      assistant_conversations: ['id', 'title', 'created_at', 'updated_at'],
+      assistant_runs: [
+        'id',
+        'conversation_id',
+        'request_id',
+        'input_hash',
+        'budget_day',
+        'status',
+        'cloud',
+        'calls',
+        'cost',
+        'reserved_cost',
+        'reserved_calls',
+        'estimated',
+        'created_at',
+      ],
+      assistant_messages: [
+        'id',
+        'conversation_id',
+        'run_id',
+        'role',
+        'content',
+        'payload',
+        'created_at',
+      ],
+      assistant_actions: [
+        'id',
+        'run_id',
+        'kind',
+        'title',
+        'arguments',
+        'status',
+        'result',
+        'created_at',
+      ],
+      assistant_origins: ['knowledge_id', 'payload'],
+      graphify_proposals: [
+        'id',
+        'fingerprint',
+        'source_id',
+        'target_id',
+        'source_hash',
+        'target_hash',
+        'relation',
+        'confidence',
+        'rationale',
+        'status',
+        'properties',
+        'created_at',
+      ],
     };
     for (const [digest, encoded] of Object.entries(archive.files || {})) {
       requireCondition(
@@ -2024,6 +2120,12 @@ export class BrainService {
             'source_attachments',
             'categorizations',
             'category_decisions',
+            'assistant_conversations',
+            'assistant_runs',
+            'assistant_messages',
+            'assistant_actions',
+            'assistant_origins',
+            'graphify_proposals',
           ].includes(table)
             ? []
             : undefined);
@@ -2033,7 +2135,20 @@ export class BrainService {
           'invalid_export',
           `Invalid ${table} records.`,
         );
-        for (const entry of entries) {
+        for (const originalEntry of entries) {
+          const entry =
+            table === 'assistant_runs' && originalEntry?.status === 'running'
+              ? {
+                  ...originalEntry,
+                  status: 'interrupted',
+                  cost: Number(originalEntry.cost || 0) + Number(originalEntry.reserved_cost || 0),
+                  calls:
+                    Number(originalEntry.calls || 0) + Number(originalEntry.reserved_calls || 0),
+                  reserved_cost: 0,
+                  reserved_calls: 0,
+                  estimated: true,
+                }
+              : originalEntry;
           requireCondition(
             entry && typeof entry === 'object',
             400,
@@ -2041,7 +2156,17 @@ export class BrainService {
             'Invalid export record.',
           );
           const values = columns.map((c) =>
-            ['tags', 'aliases', 'snapshot', 'metadata', 'properties', 'suggestions'].includes(c)
+            [
+              'tags',
+              'aliases',
+              'snapshot',
+              'metadata',
+              'properties',
+              'suggestions',
+              'payload',
+              'arguments',
+              'result',
+            ].includes(c)
               ? entry[c] === undefined
                 ? c === 'properties'
                   ? '{}'

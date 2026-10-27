@@ -18,6 +18,7 @@ await service.recoverJobs();
 if (config.seedDemo) await seedDemo(service);
 await service.classification.ensureBackfill();
 const app = createApp(service, await credentials(config.dataDir), config.port, access);
+await app.locals.assistant.recover();
 const server = app.listen(config.port, config.host, () =>
   console.log(
     `Orbit: ${access.publicOrigin || `http://${config.host}:${config.port}`} · MCP: /mcp · ${access.mode} access`,
@@ -53,6 +54,7 @@ async function shutdown() {
   }, 120000);
   deadline.unref();
   try {
+    await app.locals.assistant.close();
     const drained = new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );

@@ -15,6 +15,8 @@ import { identify, localGuard, type Credentials } from './auth.js';
 import { createMcpServer, invokeTool, toolDefinitions } from './mcp.js';
 import { AppError } from './errors.js';
 import { BrowserSessions, type AccessOptions } from './access.js';
+import { Assistant } from './assistant.js';
+import { assistantRoutes } from './assistant-routes.js';
 
 const id = z.string().uuid();
 export function createApp(
@@ -22,6 +24,7 @@ export function createApp(
   keys: Credentials,
   port = 4310,
   access: AccessOptions = { mode: 'local' },
+  options: { assistant?: Assistant } = {},
 ) {
   const app = express();
   const sessions = new BrowserSessions(access);
@@ -82,6 +85,9 @@ export function createApp(
     res.json({ authenticated: false });
   });
   app.use('/api', identify(keys, false, sessions));
+  const assistant = options.assistant || new Assistant(service);
+  app.locals.assistant = assistant;
+  app.use('/api/assistant', assistantRoutes(assistant));
   app.use('/api', (_req, res, next) => {
     res.set('Cache-Control', 'no-store');
     next();

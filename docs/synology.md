@@ -2,6 +2,8 @@
 
 Target: DS423+, DSM 7.2.2-72806 Update 9, 6 GB installed RAM, LAN/VPN access. The image targets `linux/amd64`. One container serves the built web app, REST/MCP endpoints, PGlite, and background workers. The globe renders on the client. Start with the Compose limits of two CPU cores, two inference threads, and 2 GB container memory; these are initial budgets, not measured NAS requirements.
 
+Assistant-enabled builds also support optional OpenRouter conversations. To connect an existing Garmin stack through a separate read-only companion, use the [assistant/Garmin deployment extension](synology-assistant.md) after completing this base setup.
+
 ## Access and persistence
 
 ```mermaid

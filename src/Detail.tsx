@@ -146,6 +146,35 @@ export default function Detail({
           <div className="detail-statement">
             <DocumentContent text={item.statement} />
           </div>
+          {item.assistant_origin && (
+            <details className="assistant-tool-trace">
+              <summary>
+                Saved from an assistant draft ·{' '}
+                {item.assistant_origin.stale ? 'sources changed' : 'retained sources'}
+              </summary>
+              <p>
+                Generated content was explicitly saved by you. Source references describe provenance
+                and do not establish independent verification.
+              </p>
+              {item.assistant_origin.citations?.map((citation) => (
+                <section className="assistant-action" key={citation.ref}>
+                  <strong>
+                    [{citation.ref}] {citation.title}
+                  </strong>
+                  <p>{citation.quality}</p>
+                  {citation.excerpt && <DocumentContent text={citation.excerpt} />}{' '}
+                  {citation.snapshot && (
+                    <pre>{JSON.stringify(citation.snapshot.facts, null, 2)}</pre>
+                  )}
+                  {citation.kind === 'source' && (
+                    <button className="button small" onClick={() => onOpenSource(citation.id)}>
+                      Open retained source
+                    </button>
+                  )}
+                </section>
+              ))}
+            </details>
+          )}
           <div className="detail-topics">
             {item.tags.map((tag) => (
               <span key={tag} className="tag">
